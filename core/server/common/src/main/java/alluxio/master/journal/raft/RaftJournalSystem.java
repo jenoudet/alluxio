@@ -12,6 +12,7 @@
 package alluxio.master.journal.raft;
 
 import alluxio.Constants;
+import alluxio.concurrent.jsr.ForkJoinPool;
 import alluxio.conf.PropertyKey;
 import alluxio.conf.ServerConfiguration;
 import alluxio.exception.ExceptionMessage;
@@ -920,13 +921,15 @@ public class RaftJournalSystem extends AbstractJournalSystem {
       // transfer leadership
       LOG.info("Transferring leadership to master with address <{}> and with RaftPeerId <{}>",
               serverAddress, newLeaderPeerId);
-      reply = client.admin().transferLeadership(newLeaderPeerId, TRANSFER_LEADER_WAIT_MS);
-      processReply(reply);
-      // reset the peers to have the old priorities
-      LOG.info("Resetting peer state to before transfer: {}", peersToString(oldPeers));
-      reply = client.admin().setConfiguration(oldPeers);
-      processReply(reply);
-      LOG.info("Successfully reset peer state");
+      // fire and forget: need to immediately return as the master will shut down its RPC servers
+      // once the TransferLeadershipRequest is initiated.
+      ForkJoinPool.commonPool().execute(() -> {
+        try {
+          client.admin().transferLeadership(newLeaderPeerId, TRANSFER_LEADER_WAIT_MS);
+        } catch(IOException e){
+          /* checking the transfer happens in {@link QuorumElectCommand} */
+        }
+      });
     }
   }
 

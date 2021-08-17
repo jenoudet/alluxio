@@ -64,14 +64,17 @@ public class QuorumElectCommand extends AbstractFsAdminCommand {
     JournalMasterClient jmClient = mMasterJournalMasterClient;
     String serverAddress = cl.getOptionValue(ADDRESS_OPTION_NAME);
     NetAddress address = QuorumCommand.stringToAddress(serverAddress);
+    System.out.println("temp");
 
     jmClient.transferLeadership(address);
 
     MasterInquireClient inquireClient = MasterInquireClient.Factory
             .create(mConf, FileSystemContext.create(mConf).getClientContext().getUserState());
     // wait for confirmation of leadership transfer
+    String description = "Waiting for leadership transfer to finalize";
     try {
-      CommonUtils.waitFor("Waiting for leadership transfer to finalize", () -> {
+      CommonUtils.waitFor(description, () -> {
+        System.out.println(description);
         InetSocketAddress leaderAddress;
         try {
           leaderAddress = inquireClient.getPrimaryRpcAddress();
