@@ -924,18 +924,25 @@ public class RaftJournalSystem extends AbstractJournalSystem {
                 : new IOException(String.format("reply <%s> failed", reply));
       }
       // transfer leadership
-      LOG.info("Transferring leadership to master with address <{}> and with RaftPeerId <{}>",
+      LOG.info("Transferring leadership to master with address <{}> and with RaftPeerId " +
+                      "<{}>",
               serverAddress, newLeaderPeerId);
       // fire and forget: need to immediately return as the master will shut down its RPC servers
       // once the TransferLeadershipRequest is initiated.
-      ForkJoinPool.commonPool().execute(() -> {
+      Thread.sleep(3_000);
+      new Thread(() -> {
         try {
+          LOG.info("before transferLeader");
           client.admin().transferLeadership(newLeaderPeerId, TRANSFER_LEADER_WAIT_MS);
-        } catch(IOException e){
+          LOG.info("after transferLeader");
+        } catch(Throwable t){
+          LOG.error("caught an error: {}", t.getMessage());
           /* checking the transfer happens in {@link QuorumElectCommand} */
         }
-      });
+      }).start();
       LOG.info("TransferLeadershipRequest sent");
+    } catch (Throwable t) {
+      LOG.error(t.getMessage());
     }
   }
 
