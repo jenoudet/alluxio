@@ -930,6 +930,7 @@ public class RaftJournalSystem extends AbstractJournalSystem {
           /* checking the transfer happens in {@link QuorumElectCommand} */
         }
       });
+      LOG.info("TransferLeadershipRequest sent");
     }
   }
 
