@@ -913,11 +913,16 @@ public class RaftJournalSystem extends AbstractJournalSystem {
     // --- end of updating priorities ---
     final int TRANSFER_LEADER_WAIT_MS = 30_000;
     try (RaftClient client = createClient()) {
-      LOG.info("Applying new peer state before transferring leadership: {}",
-              peersToString(peersWithNewPriorities));
+      String stringPeers = "[" + peersWithNewPriorities.stream().map(RaftPeer::toString)
+                      .collect(Collectors.joining(", ")) + "]";
+      LOG.info("Applying new peer state before transferring leadership: {}", stringPeers);
       // set peers to have new priorities
       RaftClientReply reply = client.admin().setConfiguration(peersWithNewPriorities);
-      processReply(reply);
+      if (!reply.isSuccess()) {
+        throw reply.getException() != null
+                ? reply.getException()
+                : new IOException(String.format("reply <%s> failed", reply));
+      }
       // transfer leadership
       LOG.info("Transferring leadership to master with address <{}> and with RaftPeerId <{}>",
               serverAddress, newLeaderPeerId);
@@ -931,26 +936,6 @@ public class RaftJournalSystem extends AbstractJournalSystem {
         }
       });
       LOG.info("TransferLeadershipRequest sent");
-    }
-  }
-
-  /**
-   * @param peers to be printed into a string
-   * @return the peers as a comma delimited list
-   */
-  private String peersToString(List<RaftPeer> peers) {
-    return "[" + peers.stream().map(RaftPeer::toString).collect(Collectors.joining(", ")) + "]";
-  }
-
-  /**
-   * @param reply from the ratis operation
-   * @throws IOException
-   */
-  private void processReply(RaftClientReply reply) throws IOException {
-    if (!reply.isSuccess()) {
-      throw reply.getException() != null
-              ? reply.getException()
-              : new IOException(String.format("reply <%s> failed", reply));
     }
   }
 
