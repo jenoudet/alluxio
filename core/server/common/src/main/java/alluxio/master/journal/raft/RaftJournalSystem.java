@@ -932,9 +932,7 @@ public class RaftJournalSystem extends AbstractJournalSystem {
       Thread.sleep(3_000);
       new Thread(() -> {
         try {
-          LOG.info("before transferLeader");
           client.admin().transferLeadership(newLeaderPeerId, TRANSFER_LEADER_WAIT_MS);
-          LOG.info("after transferLeader");
         } catch(Throwable t){
           LOG.error("caught an error: {}", t.getMessage());
           /* checking the transfer happens in {@link QuorumElectCommand} */
