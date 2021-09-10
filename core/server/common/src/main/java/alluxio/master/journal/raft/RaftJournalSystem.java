@@ -81,6 +81,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
@@ -917,11 +918,19 @@ public class RaftJournalSystem extends AbstractJournalSystem {
    */
   public synchronized void resetPriorities() throws IOException {
     List<RaftPeer> resetPeers = new ArrayList<>();
-    final int NEUTRAL_PRIORITY = 1;
+    Set<Integer> alreadyChosen = new HashSet<>();
     for (RaftPeer peer : mRaftGroup.getPeers()) {
+      int priority;
+      do {
+        priority = ThreadLocalRandom.current().nextInt(1, 50);
+      } while (alreadyChosen.contains(priority));
+      alreadyChosen.add(priority);
+      if (peer.getId() == mPeerId) {
+        priority = 0;
+      }
       resetPeers.add(
               RaftPeer.newBuilder(peer)
-              .setPriority(NEUTRAL_PRIORITY)
+              .setPriority(priority)
               .build()
       );
     }

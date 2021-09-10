@@ -20,6 +20,7 @@ import alluxio.AlluxioURI;
 import alluxio.ConfigurationRule;
 import alluxio.Constants;
 import alluxio.client.file.FileSystem;
+import alluxio.client.journal.JournalMasterClient;
 import alluxio.conf.PropertyKey;
 import alluxio.conf.ServerConfiguration;
 import alluxio.exception.FileAlreadyExistsException;
@@ -56,12 +57,14 @@ import org.junit.Test;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 /**
  * Integration tests for the embedded journal.
@@ -333,6 +336,56 @@ public final class EmbeddedJournalIntegrationTest extends BaseIntegrationTest {
           throw new RuntimeException(exc);
         }
       }, WaitForOptions.defaults().setTimeoutMs(TIMEOUT_3MIN));
+    }
+    mCluster.notifySuccess();
+  }
+
+  @Test
+  public void doPrioritiesMatterWhenTraditionFailover() throws Exception {
+    final int MASTER_INDEX_WAIT_TIME = 5_000;
+    mCluster = MultiProcessCluster.newBuilder(PortCoordination.EMBEDDED_JOURNAL_FAILOVER)
+            .setClusterName("TransferLeadership")
+            .setNumMasters(11)
+            .setNumWorkers(0)
+            .addProperty(PropertyKey.MASTER_JOURNAL_TYPE, JournalType.EMBEDDED.toString())
+            .addProperty(PropertyKey.MASTER_JOURNAL_FLUSH_TIMEOUT_MS, "5min")
+            .addProperty(PropertyKey.MASTER_EMBEDDED_JOURNAL_MIN_ELECTION_TIMEOUT, "750ms")
+            .addProperty(PropertyKey.MASTER_EMBEDDED_JOURNAL_MAX_ELECTION_TIMEOUT, "1500ms")
+            .build();
+    mCluster.start();
+
+    JournalMasterClient jmClient = mCluster.getJournalMasterClientForMaster();
+    for (int i = 0; i < 5; i++) {
+      // set random priorities, but current leader has priority 0
+      jmClient.resetPriorities();
+      Thread.sleep(3_000);
+      // get address of the supposed new leader
+      List<QuorumServerInfo> collect = jmClient.getQuorumInfo().getServerInfoList().stream()
+              .sorted(Comparator.comparing(QuorumServerInfo::getPriority))
+              .collect(Collectors.toList());
+      try {
+        assertTrue(collect.stream().anyMatch(info -> info.getPriority() != 0));
+      } catch (AssertionError e) {
+        continue;
+      }
+      QuorumServerInfo quorumServerInfo = collect.get(collect.size() - 1);
+      NetAddress newLeaderAddr = quorumServerInfo.getServerAddress();
+      // kill primary master
+      int primaryMasterIndex = mCluster.getPrimaryMasterIndex(MASTER_INDEX_WAIT_TIME);
+      mCluster.stopMaster(primaryMasterIndex);
+      // wait for new leader with highest priority to come up
+      final int WAIT_TIME_MS = 3 * 60 * 1000; // in ms
+      CommonUtils.waitFor("leadership to transfer", () -> {
+        try {
+          // wait until the address of the new leader matches the one designated as the new leader
+          MasterNetAddress address = mCluster.getMasterAddresses()
+                  .get(mCluster.getPrimaryMasterIndex(MASTER_INDEX_WAIT_TIME));
+          return address.getEmbeddedJournalPort() == newLeaderAddr.getRpcPort() &&
+                  address.getHostname().equals(newLeaderAddr.getHost());
+        } catch (Exception exc) {
+          return false;
+        }
+      }, WaitForOptions.defaults().setTimeoutMs(WAIT_TIME_MS));
     }
     mCluster.notifySuccess();
   }
