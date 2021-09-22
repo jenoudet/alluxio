@@ -51,7 +51,7 @@ public class EmbeddedJournalIntegrationTestFaultTolerance
 
   private void standardBefore() throws Exception {
     mCluster = MultiProcessCluster.newBuilder(PortCoordination.EMBEDDED_JOURNAL_FAULT_TOLERANCE)
-        .setClusterName("EmbeddedJournalFailover")
+        .setClusterName("EmbeddedJournalFaultTolerance-" + testName.getMethodName())
         .setNumMasters(NUM_MASTERS)
         .setNumWorkers(NUM_WORKERS)
         .addProperty(PropertyKey.MASTER_JOURNAL_TYPE, JournalType.EMBEDDED.toString())
@@ -65,7 +65,7 @@ public class EmbeddedJournalIntegrationTestFaultTolerance
 
   private void snapshotBefore() throws Exception {
     mCluster = MultiProcessCluster.newBuilder(PortCoordination.EMBEDDED_JOURNAL_FAULT_TOLERANCE)
-        .setClusterName("copySnapshotToMaster")
+        .setClusterName("EmbeddedJournalFaultTolerance-" + testName.getMethodName())
         .setNumMasters(NUM_MASTERS)
         .setNumWorkers(NUM_WORKERS)
         .addProperty(PropertyKey.MASTER_JOURNAL_TYPE, JournalType.EMBEDDED.toString())

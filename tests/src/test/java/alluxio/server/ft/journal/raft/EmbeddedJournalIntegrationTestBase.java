@@ -26,6 +26,7 @@ import alluxio.util.WaitForOptions;
 
 import org.junit.After;
 import org.junit.Rule;
+import org.junit.rules.TestName;
 
 import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
@@ -36,6 +37,9 @@ public class EmbeddedJournalIntegrationTestBase extends BaseIntegrationTest {
   public ConfigurationRule mConf =
       new ConfigurationRule(PropertyKey.USER_METRICS_COLLECTION_ENABLED, "false",
           ServerConfiguration.global());
+
+  @Rule
+  public TestName testName = new TestName();
 
   public MultiProcessCluster mCluster;
 

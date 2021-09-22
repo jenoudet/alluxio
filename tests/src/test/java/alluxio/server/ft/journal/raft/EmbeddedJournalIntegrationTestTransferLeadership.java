@@ -37,7 +37,7 @@ public class EmbeddedJournalIntegrationTestTransferLeadership
   @Before
   public void before() throws Exception {
     mCluster = MultiProcessCluster.newBuilder(PortCoordination.EMBEDDED_JOURNAL_TRANSFER_LEADER)
-        .setClusterName("TransferLeadership-" + RandomString.make(8))
+        .setClusterName("EmbeddedJournalTransferLeadership-" + testName.getMethodName())
         .setNumMasters(NUM_MASTERS)
         .setNumWorkers(NUM_WORKERS)
         .addProperty(PropertyKey.MASTER_JOURNAL_TYPE, JournalType.EMBEDDED.toString())
