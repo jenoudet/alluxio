@@ -45,11 +45,12 @@ public class PortCoordination {
   // for EmbeddedJournalIntegrationTestTransferLeadership
   public static final List<ReservedPort> EMBEDDED_JOURNAL_TRANSFER_LEADER = allocate(5, 0);
   public static final List<ReservedPort> EMBEDDED_JOURNAL_REPEAT_TRANSFER_LEADER = allocate(5, 0);
-  public static final List<ReservedPort> EMBEDDED_JOURNAL_RESET_PRIORITIES = allocate(5, 0);
   public static final List<ReservedPort> EMBEDDED_JOURNAL_ALREADY_TRANSFERRING = allocate(5, 0);
   public static final List<ReservedPort> EMBEDDED_JOURNAL_OUTSIDE_CLUSTER = allocate(5, 0);
   public static final List<ReservedPort> EMBEDDED_JOURNAL_NEW_MEMBER = allocate(6, 0);
   public static final List<ReservedPort> EMBEDDED_JOURNAL_UNAVAILABLE_MASTER = allocate(5, 0);
+  // for EmbeddedJournalIntegrationTestStress
+  public static final List<ReservedPort> EMBEDDED_JOURNAL_CHAOS = allocate(20, 0);
 
   public static final List<ReservedPort> JOURNAL_MIGRATION = allocate(3, 1);
 
