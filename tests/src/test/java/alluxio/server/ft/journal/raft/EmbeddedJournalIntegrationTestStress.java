@@ -26,6 +26,7 @@ public class EmbeddedJournalIntegrationTestStress extends EmbeddedJournalIntegra
 
   public static final int NUM_MASTERS = 5;
   public static final int NUM_WORKERS = 0;
+  public static final int WAIT_5S_MS = 5_000;
 
   private long endTime;
   private int numExtraMasters = 15;
@@ -46,10 +47,10 @@ public class EmbeddedJournalIntegrationTestStress extends EmbeddedJournalIntegra
         .build();
     mCluster.start();
 
-    for (int i = 0; i < 1000; i++) {
+    final int NUM_DIRS = 1_000;
+    for (int i = 0; i < NUM_DIRS; i++) {
       FileSystem fileSystemClient = mCluster.getFileSystemClient();
       AlluxioURI name = new AlluxioURI("/" + RandomString.make());
-      System.out.printf("creating %s\n", name);
       if (i % 2 == 0) {
         fileSystemClient.createFile(name);
         fileNames.add(name);
@@ -59,7 +60,7 @@ public class EmbeddedJournalIntegrationTestStress extends EmbeddedJournalIntegra
       }
     }
 
-    endTime = System.currentTimeMillis() + 3 * 60 * 1000;
+    endTime = System.currentTimeMillis() + 3* 60 * 1000; // now + 5 min in milliseconds
     Thread clusterT = new Thread(() -> {
       try {
         clusterOps();
@@ -157,7 +158,11 @@ public class EmbeddedJournalIntegrationTestStress extends EmbeddedJournalIntegra
               clusterSize);
           break;
         case TRANSFER_LEADER:
-          int newLeaderIdx = ThreadLocalRandom.current().nextInt(clusterSize);
+          int primaryMasterIndex = mCluster.getPrimaryMasterIndex(WAIT_5S_MS);
+          int newLeaderIdx;
+          do {
+            newLeaderIdx = ThreadLocalRandom.current().nextInt(clusterSize);
+          } while (primaryMasterIndex == newLeaderIdx);
           MasterNetAddress masterNetAddress = mCluster.getMasterAddresses().get(newLeaderIdx);
           NetAddress address = masterEBJAddr2NetAddr(masterNetAddress);
           mCluster.getJournalMasterClientForMaster().transferLeadership(address);
@@ -178,13 +183,15 @@ public class EmbeddedJournalIntegrationTestStress extends EmbeddedJournalIntegra
       switch (fsOp) {
         case CREATE_DIR:
           AlluxioURI dir = new AlluxioURI("/" + RandomString.make());
-            mCluster.getFileSystemClient().createDirectory(dir);
+          mCluster.getFileSystemClient().createDirectory(dir);
           dirNames.add(dir);
+          Assert.assertTrue(mCluster.getFileSystemClient().exists(dir));
           break;
         case CREATE_FILE:
           AlluxioURI file = new AlluxioURI("/" + RandomString.make());
-            mCluster.getFileSystemClient().createFile(file);
+          mCluster.getFileSystemClient().createFile(file);
           fileNames.add(file);
+          Assert.assertTrue(mCluster.getFileSystemClient().exists(file));
           break;
         case DELETE_DIR:
         case DELETE_FILE:
@@ -201,11 +208,12 @@ public class EmbeddedJournalIntegrationTestStress extends EmbeddedJournalIntegra
           } else {
             fileNames.remove(alluxioURI);
           }
+          Assert.assertFalse(mCluster.getFileSystemClient().exists(alluxioURI));
           break;
         default:
           break;
       }
-      Thread.sleep(5_000);
+      Thread.sleep(WAIT_5S_MS);
     }
   }
 }
