@@ -1795,18 +1795,17 @@ public final class PropertyKey implements Comparable<PropertyKey> {
   public static final PropertyKey MASTER_EMBEDDED_JOURNAL_CATCHUP_RETRY_WAIT =
       new Builder(Name.MASTER_EMBEDDED_JOURNAL_CATCHUP_RETRY_WAIT)
           .setDefaultValue("1s")
-          .setDescription("Time for embedded journal leader to wait before retrying a catch up.")
+          .setDescription("Time for embedded journal leader to wait before retrying a catch up. "
+              + "This is added to avoid excessive retries when server is not ready.")
           .setConsistencyCheckLevel(ConsistencyCheckLevel.WARN)
           .setScope(Scope.MASTER)
           .build();
   public static final PropertyKey MASTER_EMBEDDED_JOURNAL_ENTRY_SIZE_MAX =
       new Builder(Name.MASTER_EMBEDDED_JOURNAL_ENTRY_SIZE_MAX)
           .setDefaultValue("10MB")
-          .setDescription(String.format(
-              "The maximum single journal entry size allowed to be flushed. "
-              + "This value should be smaller than 30MB. "
-              + "If you update this value, please also update the value of %s ",
-              Name.MASTER_EMBEDDED_JOURNAL_FLUSH_SIZE_MAX))
+          .setDescription("The maximum single journal entry size allowed to be flushed. "
+              + "This value should be smaller than 30MB. Set to a larger value to allow larger "
+              + "journal entries when using the Alluxio Catalog service.")
           .setConsistencyCheckLevel(ConsistencyCheckLevel.WARN)
           .setScope(Scope.MASTER)
           .build();
@@ -1861,7 +1860,9 @@ public final class PropertyKey implements Comparable<PropertyKey> {
   public static final PropertyKey MASTER_EMBEDDED_JOURNAL_TRANSPORT_REQUEST_TIMEOUT_MS =
       new Builder(Name.MASTER_EMBEDDED_JOURNAL_TRANSPORT_REQUEST_TIMEOUT_MS)
           .setDefaultValue("5sec")
-          .setDescription("Timeout for requests between embedded journal masters.")
+          .setDescription("The duration after which embedded journal masters will timeout "
+              + "messages sent between each other. Lower values might cause leadership "
+              + "instability when the network is slow.")
           .setConsistencyCheckLevel(ConsistencyCheckLevel.WARN)
           .setScope(Scope.MASTER)
           .build();

@@ -118,8 +118,8 @@ in concurrent journal flushing (journal IO to standby masters and IO to local di
 * `alluxio.master.embedded.journal.snapshot.replication.chunk.size`: The stream chunk size used by masters to replicate snapshots. Default: `4MB`.
 * `alluxio.master.embedded.journal.transport.request.timeout.ms`: The duration after which embedded journal masters will timeout messages sent between each other.
  Lower values might cause leadership instability when the network is slow. Default: `5s`.
-* `alluxio.master.embedded.journal.transport.max.inbound.message.size`: Maximum allowed size for a network message between embedded journal masters.
-The configured value should allow for appending batches to all secondary masters. Default: `100MB`.
+* `alluxio.master.embedded.journal.transport.max.inbound.message.size`: The maximum size of a message that can be sent to the
+embedded journal server node. Default: `100MB`.
 * `alluxio.master.embedded.journal.write.local.first.enabled`: Whether the journal writer will attempt to write entry locally before falling back to a full remote raft client. 
  Disable local first write may impact the metadata performance under heavy load but less error-prone during network flakiness. Default: `true`.
 * `alluxio.master.embedded.journal.write.timeout`: Maximum time to wait for a write/flush on embedded journal. Default: `30sec`.
