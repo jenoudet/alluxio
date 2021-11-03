@@ -52,35 +52,6 @@ this UFS storage must be shared among masters with reading and writing access.
 To get reasonable performance, the UFS journal requires a UFS that supports fast streaming writes,
 such as HDFS or NFS. In contrast, S3 is not recommended for the UFS journal.
 
-## Configuring UFS Journal
-
-The most important configuration value to set for the journal is
-`alluxio.master.journal.folder`. This must be set to a filesystem folder that is
-available to all masters. In single-master mode, use a local filesystem path for simplicity. 
-With multiple masters distributed across different machines, the folder must
-be in a distributed system where all masters can access it. The journal folder
-should be in a filesystem that supports flush such as HDFS or NFS. It is not
-recommended to put the journal in an object store like S3. With an object store, every
-metadata operation requires a new object to be created, which is
-prohibitively slow for most serious use cases.
-
-UFS journal options can be configured using the configuration prefix:
-
-`alluxio.master.journal.ufs.option.<some alluxio property>`
-
-**Configuration examples:**
-
-Use HDFS to store the journal:
-```
-alluxio.master.journal.folder=hdfs://[namenodeserver]:[namenodeport]/alluxio_journal
-alluxio.master.journal.ufs.option.alluxio.underfs.version=2.6
-```
-
-Use the local file system to store the journal:
-```
-alluxio.master.journal.folder=/opt/alluxio/journal
-```
-
 ## Configuring Embedded Journal
 
 ### Required configuration
@@ -134,8 +105,37 @@ The format is `hostname1:port1,hostname2:port2,...`.
 * `alluxio.job.master.rpc.addresses`: A list of comma-separated host:port RPC addresses where the client should look for job masters
 when using multiple job masters without Zookeeper. This property is not used when Zookeeper is enabled,
 since Zookeeper already stores the job master addresses. If this property is not defined, clients will look for job masters using
-`[alluxio.master.rpc.addresses]:alluxio.job.master.rpc.port` addresses first, then for 
+`[alluxio.master.rpc.addresses]:alluxio.job.master.rpc.port` addresses first, then for
 `[alluxio.job.master.embedded.journal.addresses]:alluxio.job.master.rpc.port`.
+
+## Configuring UFS Journal
+
+The most important configuration value to set for the journal is
+`alluxio.master.journal.folder`. This must be set to a filesystem folder that is
+available to all masters. In single-master mode, use a local filesystem path for simplicity. 
+With multiple masters distributed across different machines, the folder must
+be in a distributed system where all masters can access it. The journal folder
+should be in a filesystem that supports flush such as HDFS or NFS. It is not
+recommended to put the journal in an object store like S3. With an object store, every
+metadata operation requires a new object to be created, which is
+prohibitively slow for most serious use cases.
+
+UFS journal options can be configured using the configuration prefix:
+
+`alluxio.master.journal.ufs.option.<some alluxio property>`
+
+**Configuration examples:**
+
+Use HDFS to store the journal:
+```
+alluxio.master.journal.folder=hdfs://[namenodeserver]:[namenodeport]/alluxio_journal
+alluxio.master.journal.ufs.option.alluxio.underfs.version=2.6
+```
+
+Use the local file system to store the journal:
+```
+alluxio.master.journal.folder=/opt/alluxio/journal
+```
 
 ## Formatting the journal
 
