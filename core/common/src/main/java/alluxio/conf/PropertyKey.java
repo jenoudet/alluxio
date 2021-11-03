@@ -5540,11 +5540,12 @@ public final class PropertyKey implements Comparable<PropertyKey> {
           .build();
   public static final PropertyKey JOB_MASTER_RPC_ADDRESSES =
       new Builder(Name.JOB_MASTER_RPC_ADDRESSES)
-          .setDescription(String.format("The list of RPC addresses to use for the job service "
-                  + "configured in non-zookeeper HA mode. If this property is not specifically "
-                  + "defined, it will first fall back to using %s, replacing those address "
-                  + "ports with the port defined by %s. Otherwise the addresses are inherited from "
-                  + "%s using the port defined in %s",
+          .setDescription(String.format("A list of comma-separated host:port RPC addresses where "
+                  + "the client should look for job masters when using multiple job masters "
+                  + "without Zookeeper. This property is not used "
+                  + "when Zookeeper is enabled, since Zookeeper already stores the job master "
+                  + "addresses. If property is not defined, clients will look for job masters "
+                  + "using [%s]:%s first, then for [%s]:%s.",
               Name.MASTER_RPC_ADDRESSES, Name.JOB_MASTER_RPC_PORT,
               Name.JOB_MASTER_EMBEDDED_JOURNAL_ADDRESSES, Name.JOB_MASTER_RPC_PORT))
           .setScope(Scope.ALL)
@@ -5559,8 +5560,7 @@ public final class PropertyKey implements Comparable<PropertyKey> {
           .build();
   public static final PropertyKey JOB_MASTER_EMBEDDED_JOURNAL_PORT =
       new Builder(Name.JOB_MASTER_EMBEDDED_JOURNAL_PORT)
-          .setDescription(
-              "The port to use for embedded journal communication with other job masters.")
+          .setDescription("The port job masters use for embedded journal communications.")
           .setDefaultValue(20003)
           .setScope(Scope.ALL)
           .build();

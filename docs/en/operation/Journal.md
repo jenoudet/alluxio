@@ -122,7 +122,7 @@ in concurrent journal flushing (journal IO to standby masters and IO to local di
 embedded journal server node. Default: `100MB`.
 * `alluxio.master.embedded.journal.write.timeout`: Maximum time to wait for a write/flush on embedded journal. Default: `30sec`.
 
-### Configuring Job service
+### Configuring the Job service
 
 It is usually best not to set any of these - by default the job master will use the same hostnames as the Alluxio master,
 so it is enough to set only `alluxio.master.embedded.journal.addresses`. These properties only need to be set
@@ -133,8 +133,9 @@ when the job service runs independently of the rest of the system or using a non
 The format is `hostname1:port1,hostname2:port2,...`.
 * `alluxio.job.master.rpc.addresses`: A list of comma-separated host:port RPC addresses where the client should look for job masters
 when using multiple job masters without Zookeeper. This property is not used when Zookeeper is enabled,
-since Zookeeper already stores the job master addresses. If this is not set, clients will look for job masters using the hostnames
-from `alluxio.master.embedded.journal.addresses` and the job master rpc port.
+since Zookeeper already stores the job master addresses. If this property is not defined, clients will look for job masters using
+`[alluxio.master.rpc.addresses]:alluxio.job.master.rpc.port` addresses first, then for 
+`[alluxio.job.master.embedded.journal.addresses]:alluxio.job.master.rpc.port`.
 
 ## Formatting the journal
 
