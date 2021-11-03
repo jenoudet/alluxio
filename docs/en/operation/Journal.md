@@ -120,8 +120,6 @@ in concurrent journal flushing (journal IO to standby masters and IO to local di
  Lower values might cause leadership instability when the network is slow. Default: `5s`.
 * `alluxio.master.embedded.journal.transport.max.inbound.message.size`: The maximum size of a message that can be sent to the
 embedded journal server node. Default: `100MB`.
-* `alluxio.master.embedded.journal.write.local.first.enabled`: Whether the journal writer will attempt to write entry locally before falling back to a full remote raft client. 
- Disable local first write may impact the metadata performance under heavy load but less error-prone during network flakiness. Default: `true`.
 * `alluxio.master.embedded.journal.write.timeout`: Maximum time to wait for a write/flush on embedded journal. Default: `30sec`.
 
 ### Configuring Job service
@@ -211,9 +209,9 @@ Backup delegation can be configured with the below properties:
 
 Some advanced properties control the communication between Alluxio masters for coordinating the backup:
 - `alluxio.master.backup.transport.timeout`: Communication timeout for messaging between masters for coordinating backup. Default: `30sec`.
-- `alluxio.master.backup.connect.interval.min`: Minimum duration to sleep before retrying after unsuccessful handshake between stand-by master and leading master. Default: `1sec`.
-- `alluxio.master.backup.connect.interval.max`: Maximum duration to sleep before retrying after unsuccessful handshake between stand-by master and leading master. Default: `30sec`.
-- `alluxio.master.backup.abandon.timeout`: Specifies how long the leading master waits for a heart-beat before abandoning the backup. Default: `1min`.
+- `alluxio.master.backup.connect.interval.min`: Minimum delay between each connection attempt to backup-leader. Default: `1sec`.
+- `alluxio.master.backup.connect.interval.max`: Maximum delay between each connection attempt to backup-leader. Default: `30sec`.
+- `alluxio.master.backup.abandon.timeout`: Duration after which leader will abandon the backup if it has not received heartbeat from backup-worker. Default: `1min`.
 
 Since it is uncertain which host will take the backup, it is suggested to use shared paths for taking backups with backup delegation.
 
@@ -295,9 +293,9 @@ that the removed master is shown as `UNAVAILABLE`.
 $ ./bin/alluxio fsadmin journal quorum remove -domain <MASTER | JOB_MASTER> -address <HOSTNAME:PORT>
 ```
 
-3. Verify that the removed member is no longer shown in the quorum info.
+3. Verify that the removed member is no longer shown in the `quorum info`.
 
-##### Transferring leadership to a specific master
+##### Electing a specific master as leader
 To aid in debugging and to add flexibility, it is possible to manually change the leader of an embedded journal cluster.
 
 1. Check current quorum state:
@@ -305,9 +303,9 @@ To aid in debugging and to add flexibility, it is possible to manually change th
 $ ./bin/alluxio fsadmin journal quorum info -domain MASTER
 ```
 This will print out node status for all currently participating members of the embedded journal cluster. You should select one 
-of the `AVAILABLE` masters.
+of the `AVAILABLE` masters. The current leader is also displayed by this command. 
 
-2. Transfer the leadership to an available master:
+2. Elect an available master as leader:
 ```console
 $ ./bin/alluxio fsadmin journal quorum elect -address <HOSTNAME:PORT>
 ```

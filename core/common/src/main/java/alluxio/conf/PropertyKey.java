@@ -1559,14 +1559,16 @@ public final class PropertyKey implements Comparable<PropertyKey> {
   public static final PropertyKey MASTER_BACKUP_TRANSPORT_TIMEOUT =
       new Builder(Name.MASTER_BACKUP_TRANSPORT_TIMEOUT)
           .setDefaultValue("30sec")
-          .setDescription("Request timeout for backup messaging.")
+          .setDescription("Communication timeout for messaging between masters for "
+              + "coordinating backup.")
           .setConsistencyCheckLevel(ConsistencyCheckLevel.WARN)
           .setScope(Scope.MASTER)
           .build();
   public static final PropertyKey MASTER_BACKUP_HEARTBEAT_INTERVAL =
       new Builder(Name.MASTER_BACKUP_HEARTBEAT_INTERVAL)
           .setDefaultValue("2sec")
-          .setDescription("Interval at which follower updates the leader on ongoing backup.")
+          .setDescription("Interval at which stand-by master that is taking the backup will "
+              + "update the leading master with current backup status.")
           .setConsistencyCheckLevel(ConsistencyCheckLevel.IGNORE)
           .setScope(Scope.MASTER)
           .build();
@@ -1588,7 +1590,7 @@ public final class PropertyKey implements Comparable<PropertyKey> {
       new Builder(Name.MASTER_BACKUP_ABANDON_TIMEOUT)
           .setDefaultValue("1min")
           .setDescription("Duration after which leader will abandon the backup"
-              + " if not received heartbeat from backup-worker.")
+              + " if it has not received heartbeat from backup-worker.")
           .setConsistencyCheckLevel(ConsistencyCheckLevel.IGNORE)
           .setScope(Scope.MASTER)
           .build();
