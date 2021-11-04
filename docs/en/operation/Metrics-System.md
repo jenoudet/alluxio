@@ -23,6 +23,17 @@ The following instances are currently supported:
 * Worker: The Alluxio worker process.
 * Client: Any process with the Alluxio client library.
 
+## Metric Types
+
+Each metric falls into one of the following metric types:
+
+* Gauge: Records a value
+* Meter: Measures the rate of events over time (e.g., "requests per minute")
+* Counter: Measures the number of times an event occurs
+* Timer: Measures both the rate that a particular event is called and the distribution of its duration
+
+For more details about the metric types, please refer to [the metrics library documentation](https://metrics.dropwizard.io/3.1.0/getting-started/)
+
 ## Metrics Sink Configuration
 
 A **sink** specifies where metrics are delivered to. 
@@ -65,6 +76,47 @@ $ curl <WORKER_HOSTNAME>:<WORKER_WEB_PORT>/metrics/json
 $ curl 127.0.0.1:30000/metrics/json/
 ``` 
 
+### Prometheus Sink Setup
+
+[Prometheus](https://prometheus.io/) is a monitoring tool that can help to monitor Alluxio metrics changes.
+
+In the metrics property file, `$ALLUXIO_HOME/conf/metrics.properties` by default, add the following properties:
+
+```
+# Enable PrometheusMetricsServlet
+sink.prometheus.class=alluxio.metrics.sink.PrometheusMetricsServlet
+```
+
+If Alluxio is deployed in a cluster, this file needs to be distributed to all the nodes.
+Restart the Alluxio servers to activate new configuration changes.
+
+You can send an HTTP request to `/metrics/prometheus/` of the Alluxio leading master or workers to get a snapshot of metrics in Prometheus format.
+
+```console
+# Get the metrics in JSON format from Alluxio leading master or workers
+$ curl <LEADING_MASTER_HOSTNAME>:<MASTER_WEB_PORT>/metrics/prometheus/
+$ curl <WORKER_HOSTNAME>:<WORKER_WEB_PORT>/metrics/prometheus/
+
+# For example, get the local master metrics with its default web port 19999
+$ curl 127.0.0.1:19999/metrics/prometheus/
+# Get the local worker metrics with its default web port 30000
+$ curl 127.0.0.1:30000/metrics/prometheus/
+```
+
+Then configure `prometheus.yml` pointing to those endpoints to get Alluxio metrics.
+
+```
+scrape_configs:
+  - job_name: "alluxio master"
+      metrics_path: '/metrics/prometheus/'
+      static_configs:
+      - targets: ['<LEADING_MASTER_HOSTNAME>:<MASTER_WEB_PORT>' ]
+  - job_name: "alluxio worker"
+      metrics_path: '/metrics/prometheus/'
+      static_configs:
+      - targets: ['<WORKER_HOSTNAME>:<WORKER_WEB_PORT>' ]
+```
+
 ### CSV Sink Setup
 
 This section gives an example of writing collected metrics to CSV files.
@@ -97,59 +149,9 @@ The filename will correspond with the metric name.
 
 Refer to `metrics.properties.template` for all possible sink specific configurations. 
 
-### Prometheus Sink Setup
+## Web UI
 
-[Prometheus](https://prometheus.io/) is a monitoring tool that can help to monitor Alluxio metrics changes.
-
-In the metrics property file, `$ALLUXIO_HOME/conf/metrics.properties` by default, add the following properties:
-
-```
-# Enable PrometheusMetricsServlet
-sink.prometheus.class=alluxio.metrics.sink.PrometheusMetricsServlet
-```
-
-If Alluxio is deployed in a cluster, this file needs to be distributed to all the nodes.
-Restart the Alluxio servers to activate new configuration changes.
-
-You can send an HTTP request to `/metrics/prometheus/` of the Alluxio leading master or workers to get a snapshot of metrics in Prometheus format. 
-
-```console
-# Get the metrics in JSON format from Alluxio leading master or workers
-$ curl <LEADING_MASTER_HOSTNAME>:<MASTER_WEB_PORT>/metrics/prometheus/
-$ curl <WORKER_HOSTNAME>:<WORKER_WEB_PORT>/metrics/prometheus/
-
-# For example, get the local master metrics with its default web port 19999
-$ curl 127.0.0.1:19999/metrics/prometheus/
-# Get the local worker metrics with its default web port 30000
-$ curl 127.0.0.1:30000/metrics/prometheus/
-```
-
-Then configure `prometheus.yml` pointing to those endpoints to get Alluxio metrics.
-
-```
-scrape_configs:
-  - job_name: "alluxio master"
-      metrics_path: '/metrics/prometheus/'
-      static_configs:
-      - targets: ['<LEADING_MASTER_HOSTNAME>:<MASTER_WEB_PORT>' ]
-  - job_name: "alluxio worker"
-      metrics_path: '/metrics/prometheus/'
-      static_configs:
-      - targets: ['<WORKER_HOSTNAME>:<WORKER_WEB_PORT>' ]
-```
-
-## Metric Types
-
-Each metric falls into one of the following metric types:
-
-* Gauge: Records a value
-* Meter: Measures the rate of events over time (e.g., "requests per minute")
-* Counter: Measures the number of times an event occurs
-* Timer: Measures both the rate that a particular event is called and the distribution of its duration
-
-For more details about the metric types, please refer to [the metrics library documentation](https://metrics.dropwizard.io/3.1.0/getting-started/)
-
-## Master Web UI Metrics
+### Master Web UI Metrics
 
 Besides the raw metrics shown via metrics servlet or custom metrics configuration,
 users can track key cluster performance metrics in a more human-readable way in the web interface of 
@@ -188,6 +190,29 @@ Detailed descriptions of those metrics are in [cluster metrics]({{ '/en/referenc
 without accessing UFSes. Performance improvement can be significant if the target UFS is remote or slow in response.
 Costs can be saved if the underlying storage charges are based on requests.
 
+### Grafana Web UI with Prometheus
+
+Grafana is a metrics analytics and visualization software used for visualizing time series data. You can use Grafana to better visualize the various metrics that Alluxio collects. The software allows users to more easily see changes in memory, storage, and completed operations in Alluxio.
+
+Grafana supports visualizing data from Prometheus. The following steps can help you to build your Alluxio monitoring based on Grafana and Prometheus easily.
+
+1. Install Grafana using the instructions [here](https://grafana.com/docs/grafana/latest/installation/#install-grafana/).
+2. [Download](https://grafana.com/grafana/dashboards/13467) the Grafana template JSON file for Alluxio.
+3. Import the template JSON file to create a dashboard. See this [example](https://grafana.com/docs/grafana/latest/dashboards/export-import/#importing-a-dashboard) for importing a dashboard.
+4. Add the Prometheus data source to Grafana with a custom name, for example, *prometheus-alluxio*. Refer to the [toturial](https://grafana.com/docs/grafana/latest/datasources/add-a-data-source/#add-a-data-source) for help on importing a dashboard.
+5. Modify the variables in the dashboard/settings with instructions [here](https://grafana.com/docs/grafana/latest/variables/) and **save** your dashboard.
+
+   | Variable | Value |
+   |------------------|------------------------------------------------------------|
+   | alluxio_datasource | Your prometheus datasource name (eg. *prometheus-alluxio* used in step 4) |
+   | masters            | Master 'job_name' configured in `prometheus.yml` (eg. *alluxio master*) |
+   | workers            | Worker 'job_name' configured in `prometheus.yml` (eg. *alluxio worker*) |
+   | alluxio_user       | The user used to start up Alluxio (eg. *alluxio*) |
+
+If your Grafana dashboard appears like the screenshot below, you have built your monitoring successfully. Of course, you can modify the JSON file or just operate on the dashboard to design your monitoring.
+
+![Grafana Web UI]({{ '/img/screenshot_grafana_webui.png' | relativize_url }})
+
 ## JVM metrics
 
 You can get JVM related metrics via `jvm_exporter` as a Java agent.
@@ -201,29 +226,6 @@ java -javaagent:./jmx_prometheus_javaagent-0.16.0.jar=8080:config.yaml -jar your
 Metrics will now be accessible at http://localhost:8080/metrics.
 
 `config.yaml` file provides the configuration for jmx_exporter. Empty file can be used for a quick start. For more information, please refer to [jmx_exporter documentation](https://github.com/prometheus/jmx_exporter).
-
-## Grafana Web UI with Prometheus
-
-Grafana is a metrics analytics and visualization software used for visualizing time series data. You can use Grafana to better visualize the various metrics that Alluxio collects. The software allows users to more easily see changes in memory, storage, and completed operations in Alluxio.
-
-Grafana supports visualizing data from Prometheus. The following steps can help you to build your Alluxio monitoring based on Grafana and Prometheus easily.
-
- 1. Install Grafana using the instructions [here](https://grafana.com/docs/grafana/latest/installation/#install-grafana/).
- 2. [Download](https://grafana.com/grafana/dashboards/13467) the Grafana template JSON file for Alluxio.
- 3. Import the template JSON file to create a dashboard. See this [example](https://grafana.com/docs/grafana/latest/dashboards/export-import/#importing-a-dashboard) for importing a dashboard.
- 4. Add the Prometheus data source to Grafana with a custom name, for example, *prometheus-alluxio*. Refer to the [toturial](https://grafana.com/docs/grafana/latest/datasources/add-a-data-source/#add-a-data-source) for help on importing a dashboard.
- 5. Modify the variables in the dashboard/settings with instructions [here](https://grafana.com/docs/grafana/latest/variables/) and **save** your dashboard.
-
-	| Variable | Value |
- 	|------------------|------------------------------------------------------------|
- 	| alluxio_datasource | Your prometheus datasource name (eg. *prometheus-alluxio* used in step 4) |
- 	| masters            | Master 'job_name' configured in `prometheus.yml` (eg. *alluxio master*) |
- 	| workers            | Worker 'job_name' configured in `prometheus.yml` (eg. *alluxio worker*) |
- 	| alluxio_user       | The user used to start up Alluxio (eg. *alluxio*) |
-
-If your Grafana dashboard appears like the screenshot below, you have built your monitoring successfully. Of course, you can modify the JSON file or just operate on the dashboard to design your monitoring.
-
-![Grafana Web UI]({{ '/img/screenshot_grafana_webui.png' | relativize_url }})
 
 ## References
 
