@@ -32,49 +32,42 @@ Each metric falls into one of the following metric types:
 * Counter: Measures the number of times an event occurs
 * Timer: Measures both the rate that a particular event is called and the distribution of its duration
 
-For more details about the metric types, please refer to [the metrics library documentation](https://metrics.dropwizard.io/3.1.0/getting-started/)
+For more details about the metric types, please refer to [the metrics library documentation](https://metrics.dropwizard.io/3.1.0/getting-started/).
 
 ## Metrics Sink Configuration
 
-A **sink** specifies where metrics are delivered to. 
+A <b>sink</b> specifies where metrics are delivered to. 
 Each instance can report to zero or more sinks.
 
+* `PrometheusMetricsServlet`: Adds a servlet in Web UI to serve metrics data in Prometheus format.
 * `ConsoleSink`: Outputs metrics values to the console.
 * `CsvSink`: Exports metrics data to CSV files at regular intervals.
 * `JmxSink`: Registers metrics for viewing in a JMX console.
 * `GraphiteSink`: Sends metrics to a Graphite server.
 * `MetricsServlet`: Adds a servlet in Web UI to serve metrics data as JSON data.
-* `PrometheusMetricsServlet`: Adds a servlet in Web UI to serve metrics data in Prometheus format
 
 The metrics system is configured via a configuration file that Alluxio expects to be present at `$ALLUXIO_HOME/conf/metrics.properties`. 
 A custom file location can be specified via the `alluxio.metrics.conf.file` configuration property. 
-Alluxio provides a `metrics.properties.template` under the `conf` directory which includes all configurable properties
-and guidance on how to specify each property. 
+Refer to `$ALLUXIO_HOME/conf/metrics.properties.template` for all possible sink specific configurations.
+
+The Alluxio leading master emits both its instance metrics and a summary of the cluster-wide aggregated metrics.
 
 ### Default HTTP JSON Sink
 
 By default, `MetricsServlet` is enabled in Alluxio leading master and workers. 
 
-You can send an HTTP request to `/metrics/json/` of the Alluxio leading master to get a snapshot of all metrics in JSON format. 
-Metrics on the Alluxio leading master contains its instance metrics and a summary of the cluster-wide aggregated metrics.
+You can send an HTTP request to `/metrics/json/` of the Alluxio leading master or workers to get a snapshot of all metrics in JSON format.
 
 ```console
-# Get the metrics in JSON format from Alluxio leading master
-$ curl <LEADING_MASTER_HOSTNAME>:<MASTER_WEB_PORT>/metrics/json
+# Get the metrics in JSON format from Alluxio leading master or workers
+$ curl <LEADING_MASTER_HOSTNAME>:<MASTER_WEB_PORT>/metrics/json/
+$ curl <WORKER_HOSTNAME>:<WORKER_WEB_PORT>/metrics/json/
 
-# For example, get the metrics from master process running locally with default web port
+# For example, get the local master metrics with its default web port 19999
 $ curl 127.0.0.1:19999/metrics/json/
-```
-
-Send an HTTP request to `/metrics/json/` of the active Alluxio workers to get per-worker metrics.
-
-```console
-# Get the metrics in JSON format from an active Alluxio worker
-$ curl <WORKER_HOSTNAME>:<WORKER_WEB_PORT>/metrics/json
-
-# For example, get the metrics from worker process running locally with default web port
+# Get the local worker metrics with its default web port 30000
 $ curl 127.0.0.1:30000/metrics/json/
-``` 
+```
 
 ### Prometheus Sink Setup
 
@@ -82,7 +75,7 @@ $ curl 127.0.0.1:30000/metrics/json/
 
 In the metrics property file, `$ALLUXIO_HOME/conf/metrics.properties` by default, add the following properties:
 
-```
+```properties
 # Enable PrometheusMetricsServlet
 sink.prometheus.class=alluxio.metrics.sink.PrometheusMetricsServlet
 ```
@@ -93,7 +86,7 @@ Restart the Alluxio servers to activate new configuration changes.
 You can send an HTTP request to `/metrics/prometheus/` of the Alluxio leading master or workers to get a snapshot of metrics in Prometheus format.
 
 ```console
-# Get the metrics in JSON format from Alluxio leading master or workers
+# Get the metrics in Prometheus format from Alluxio leading master or workers
 $ curl <LEADING_MASTER_HOSTNAME>:<MASTER_WEB_PORT>/metrics/prometheus/
 $ curl <WORKER_HOSTNAME>:<WORKER_WEB_PORT>/metrics/prometheus/
 
@@ -103,19 +96,26 @@ $ curl 127.0.0.1:19999/metrics/prometheus/
 $ curl 127.0.0.1:30000/metrics/prometheus/
 ```
 
-Then configure `prometheus.yml` pointing to those endpoints to get Alluxio metrics.
+You can now direct platforms like Grafana or Datadog to these HTTP endpoints and read the metrics in Prometheus format. 
 
-```
+Alternatively, you can configure the Prometheus client using this sample `prometheus.yml` to read the endpoints. This is
+recommended for interfacing with Grafana.
+
+```yaml
 scrape_configs:
   - job_name: "alluxio master"
       metrics_path: '/metrics/prometheus/'
       static_configs:
-      - targets: ['<LEADING_MASTER_HOSTNAME>:<MASTER_WEB_PORT>' ]
+      - targets: [ '<LEADING_MASTER_HOSTNAME>:<MASTER_WEB_PORT>' ]
   - job_name: "alluxio worker"
       metrics_path: '/metrics/prometheus/'
       static_configs:
-      - targets: ['<WORKER_HOSTNAME>:<WORKER_WEB_PORT>' ]
+      - targets: [ '<WORKER_HOSTNAME>:<WORKER_WEB_PORT>' ]
 ```
+
+<b>Be wary when specifying which metrics you want to poll.</b> Prometheus modifies metrics names in order to process them. 
+It usually replaces `.` with `_`, and sometimes appends text. It is good practice to use the `curl` commands 
+listed above to see how the names are transformed by Prometheus.
 
 ### CSV Sink Setup
 
@@ -129,7 +129,7 @@ $ mkdir /tmp/alluxio-metrics
 
 In the metrics property file, `$ALLUXIO_HOME/conf/metrics.properties` by default, add the following properties:
 
-```
+```properties
 # Enable CsvSink
 sink.csv.class=alluxio.metrics.sink.CsvSink
 
@@ -146,8 +146,6 @@ Restart the Alluxio servers to activate the new configuration changes.
 
 After starting Alluxio, the CSV files containing metrics will be found in the `sink.csv.directory`. 
 The filename will correspond with the metric name.
-
-Refer to `metrics.properties.template` for all possible sink specific configurations. 
 
 ## Web UI
 
@@ -170,14 +168,14 @@ The nickname and original metric name corresponding are shown:
 
 | Nick Name | Original Metric Name |
 |-----------------------------------|------------------------------|
-| Local Alluxio (Domain Socket) Read | cluster.BytesReadDomain |
-| Local Alluxio (Domain Socket) Write | cluster.BytesWrittenDomain |
-| Local Alluxio (Short-circuit) Read | cluster.BytesReadLocal |
-| Local Alluxio (Short-circuit) Write | cluster.BytesWrittenLocal |
-| Remote Alluxio Read | cluster.BytesReadRemote |
-| Remote Alluxio Write | cluster.BytesWrittenRemote |
-| Under Filesystem Read | cluster.BytesReadUfsAll | 
-| Under Filesystem Write | cluster.BytesWrittenUfsAll |
+| Local Alluxio (Domain Socket) Read | `cluster.BytesReadDomain` |
+| Local Alluxio (Domain Socket) Write | `cluster.BytesWrittenDomain` |
+| Local Alluxio (Short-circuit) Read | `cluster.BytesReadLocal` |
+| Local Alluxio (Short-circuit) Write | `cluster.BytesWrittenLocal` |
+| Remote Alluxio Read | `cluster.BytesReadRemote` |
+| Remote Alluxio Write | `cluster.BytesWrittenRemote` |
+| Under Filesystem Read | `cluster.BytesReadUfsAll `| 
+| Under Filesystem Write | `cluster.BytesWrittenUfsAll` |
 
 Detailed descriptions of those metrics are in [cluster metrics]({{ '/en/reference/Metrics-List.html' | relativize_url }}#cluster-metrics).
 
@@ -199,7 +197,7 @@ Grafana supports visualizing data from Prometheus. The following steps can help 
 1. Install Grafana using the instructions [here](https://grafana.com/docs/grafana/latest/installation/#install-grafana/).
 2. [Download](https://grafana.com/grafana/dashboards/13467) the Grafana template JSON file for Alluxio.
 3. Import the template JSON file to create a dashboard. See this [example](https://grafana.com/docs/grafana/latest/dashboards/export-import/#importing-a-dashboard) for importing a dashboard.
-4. Add the Prometheus data source to Grafana with a custom name, for example, *prometheus-alluxio*. Refer to the [toturial](https://grafana.com/docs/grafana/latest/datasources/add-a-data-source/#add-a-data-source) for help on importing a dashboard.
+4. Add the Prometheus data source to Grafana with a custom name, for example, *prometheus-alluxio*. Refer to the [tutorial](https://grafana.com/docs/grafana/latest/datasources/add-a-data-source/#add-a-data-source) for help on importing a dashboard.
 5. Modify the variables in the dashboard/settings with instructions [here](https://grafana.com/docs/grafana/latest/variables/) and **save** your dashboard.
 
    | Variable | Value |
@@ -212,6 +210,30 @@ Grafana supports visualizing data from Prometheus. The following steps can help 
 If your Grafana dashboard appears like the screenshot below, you have built your monitoring successfully. Of course, you can modify the JSON file or just operate on the dashboard to design your monitoring.
 
 ![Grafana Web UI]({{ '/img/screenshot_grafana_webui.png' | relativize_url }})
+
+### Datadog Web UI with Prometheus
+
+Datadog is a metrics analytics and visualization software, much like Grafana above. It supports visualizing data from Prometheus.
+The following steps can help you to build your Alluxio monitoring based on Datadog and Prometheus easily.
+
+1. Install and run the Datadog agent using the instructions [here](https://docs.datadoghq.com/getting_started/agent/).
+2. Modify the `conf.d/openmetrics.d/conf.yaml` file (which you can locate using 
+[this resource](https://docs.datadoghq.com/agent/guide/agent-configuration-files/?tab=agentv6v7#agent-configuration-directory)). 
+Here is a sample `conf.yaml` file:
+```yaml
+init_config:
+
+instances:
+  - prometheus_url: 'http://<LEADING_MASTER_HOSTNAME>:<MASTER_WEB_PORT>/metrics/prometheus/'
+    namespace: 'alluxioMaster'
+    metrics: [ "<Master metric 1>", "<Master metric 2>" ]
+  - prometheus_url: 'http://<WORKER_HOSTNAME>:<WORKER_WEB_PORT>/metrics/prometheus/'
+    namespace: 'alluxioWorker'
+    metrics: [ "<Worker metric 1>", "<Worker metric 2>" ]
+```
+3. Restart the Datadog agent (instructions [here](https://docs.datadoghq.com/agent/guide/agent-commands/?tab=agentv6v7#restart-the-agent)).
+
+The metrics emitted by Alluxio should now display on the Datadog web interface.
 
 ## JVM metrics
 
@@ -230,4 +252,4 @@ Metrics will now be accessible at http://localhost:8080/metrics.
 ## References
 
 Detailed Alluxio metrics are listed in the [metrics list doc]({{ '/en/reference/Metrics-List.html' | relativize_url }}).
-Metrics stored in leading master is exposed via [fsadmin report metrics]({{ '/en/operation/Admin-CLI.html' | relativize_url }}#report).
+Metrics stored in leading master is exposed via [`fsadmin report metrics`]({{ '/en/operation/Admin-CLI.html' | relativize_url }}#report).
