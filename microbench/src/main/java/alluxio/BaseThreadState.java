@@ -47,7 +47,7 @@ public class BaseThreadState {
     return structure.mDepthGenerator.nextValue().intValue();
   }
 
-  public long nxtFileId(BaseFileStructure structure) {
-    return structure.mFileGenerator.nextValue().longValue();
+  public long nextFileId(BaseFileStructure structure, int depth) {
+    return structure.mFileGenerators.get(depth).nextValue().longValue();
   }
 }

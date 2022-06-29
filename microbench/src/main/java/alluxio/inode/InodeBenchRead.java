@@ -89,7 +89,8 @@ public class InodeBenchRead {
   @Benchmark
   public void testMethod(Db db, ThreadState ts, Blackhole bh) throws Exception {
     if (db.mSingleFile) {
-      bh.consume(db.mBase.getFile(ts.nextDepth(db), ts.nxtFileId(db)));
+      int depth = ts.nextDepth(db);
+      bh.consume(db.mBase.getFile(depth, ts.nextFileId(db, depth)));
     } else {
       db.mBase.listDir(ts.nextDepth(db), bh::consume);
     }

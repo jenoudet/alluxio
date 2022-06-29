@@ -17,8 +17,10 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import site.ycsb.generator.NumberGenerator;
-import site.ycsb.generator.UniformLongGenerator;
+import site.ycsb.generator.SequentialGenerator;
 import site.ycsb.generator.ZipfianGenerator;
+
+import java.util.ArrayList;
 
 /**
  * Governs the file structure parameters inside a JMH micro bench.
@@ -32,24 +34,29 @@ public class BaseFileStructure {
   @Param({"10", "100", "1000"})
   public int mFileCount;
 
-  @Param({"UNIFORM", "ZIPF"})
+  @Param({"SEQUENTIAL", "ZIPF"})
   public Distribution mDistribution;
 
-  public NumberGenerator mFileGenerator;
+  // each depth level needs its own file id generator
+  public ArrayList<NumberGenerator> mFileGenerators = new ArrayList<>();
   public NumberGenerator mDepthGenerator;
 
-  public enum Distribution { UNIFORM, ZIPF }
+  public enum Distribution { SEQUENTIAL, ZIPF }
 
   @Setup(Level.Trial)
   public void init() {
     switch (mDistribution) {
       case ZIPF:
-        mFileGenerator = new ZipfianGenerator(mFileCount);
-        mDepthGenerator = new ZipfianGenerator(mDepth);
+        mDepthGenerator = new ZipfianGenerator(0, mDepth);
+        for (int i = 0; i < mDepth + 1; i++) {
+          mFileGenerators.add(new ZipfianGenerator(0, mFileCount - 1));
+        }
         break;
       default:
-        mFileGenerator = new UniformLongGenerator(0, mFileCount - 1);
-        mDepthGenerator = new UniformLongGenerator(0, mDepth);
+        mDepthGenerator = new SequentialGenerator(0, mDepth);
+        for (int i = 0; i < mDepth + 1; i++) {
+          mFileGenerators.add(new SequentialGenerator(0, mFileCount - 1));
+        }
     }
   }
 }
