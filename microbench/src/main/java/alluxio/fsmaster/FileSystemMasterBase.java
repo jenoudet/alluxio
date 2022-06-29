@@ -27,6 +27,7 @@ import alluxio.master.block.BlockMasterFactory;
 import alluxio.master.file.DefaultFileSystemMaster;
 import alluxio.master.file.FileSystemMaster;
 import alluxio.master.file.FileSystemMasterClientServiceHandler;
+import alluxio.master.file.contexts.CreateDirectoryContext;
 import alluxio.master.file.contexts.CreateFileContext;
 import alluxio.master.journal.JournalSystem;
 import alluxio.master.journal.JournalType;
@@ -37,7 +38,6 @@ import alluxio.security.user.TestUserState;
 import alluxio.util.CommonUtils;
 import alluxio.util.ThreadFactoryUtils;
 import alluxio.util.executor.ExecutorServiceFactories;
-import alluxio.wire.FileInfo;
 import alluxio.wire.WorkerNetAddress;
 
 import com.google.common.collect.ImmutableMap;
@@ -47,6 +47,7 @@ import org.apache.log4j.Logger;
 import org.junit.rules.TemporaryFolder;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.concurrent.ExecutorService;
@@ -55,17 +56,11 @@ import java.util.concurrent.Executors;
 public class FileSystemMasterBase {
   private final TemporaryFolder mFolder = new TemporaryFolder();
   private final MasterRegistry mRegistry = new MasterRegistry();
-  private final ExecutorService mExecutorService = Executors
-      .newFixedThreadPool(4, ThreadFactoryUtils.build("DefaultFileSystemMasterTest-%d", true));
-
   private final JournalSystem mJournalSystem;
-  private final MetricsMaster mMetricsMaster;
-  private final BlockMaster mBlockMaster;
-  private final long mWorkerId1;
-  private final long mWorkerId2;
 
   FileSystemMaster mFsMaster;
   FileSystemMasterClientServiceHandler mFsMasterServer;
+  private ArrayList<String> mDepthPaths;
 
   FileSystemMasterBase() throws Exception {
     Logger.getRootLogger().setLevel(Level.ERROR);
@@ -92,12 +87,14 @@ public class FileSystemMasterBase {
         .build(CommonUtils.ProcessType.MASTER);
     CoreMasterContext masterContext = MasterTestUtils.testMasterContext(mJournalSystem,
         new TestUserState("test", Configuration.global()));
-    mMetricsMaster = new MetricsMasterFactory().create(mRegistry, masterContext);
-    mRegistry.add(MetricsMaster.class, mMetricsMaster);
-    mBlockMaster = new BlockMasterFactory().create(mRegistry, masterContext);
+    MetricsMaster metricsMaster = new MetricsMasterFactory().create(mRegistry, masterContext);
+    mRegistry.add(MetricsMaster.class, metricsMaster);
+    BlockMaster blockMaster = new BlockMasterFactory().create(mRegistry, masterContext);
 
-    mFsMaster = new DefaultFileSystemMaster(mBlockMaster, masterContext,
-        ExecutorServiceFactories.constantExecutorServiceFactory(mExecutorService));
+    ExecutorService service = Executors.newFixedThreadPool(4,
+        ThreadFactoryUtils.build("DefaultFileSystemMasterTest-%d", true));
+    mFsMaster = new DefaultFileSystemMaster(blockMaster, masterContext,
+        ExecutorServiceFactories.constantExecutorServiceFactory(service));
     mFsMasterServer = new FileSystemMasterClientServiceHandler(mFsMaster);
 
     mRegistry.add(FileSystemMaster.class, mFsMaster);
@@ -106,18 +103,18 @@ public class FileSystemMasterBase {
     mRegistry.start(true);
 
     // set up workers
-    mWorkerId1 = mBlockMaster.getWorkerId(
+    long workerId1 = blockMaster.getWorkerId(
         new WorkerNetAddress().setHost("localhost").setRpcPort(80).setDataPort(81).setWebPort(82));
-    mBlockMaster.workerRegister(mWorkerId1,
+    blockMaster.workerRegister(workerId1,
         Arrays.asList(Constants.MEDIUM_MEM, Constants.MEDIUM_SSD),
         ImmutableMap.of(Constants.MEDIUM_MEM, (long) Constants.MB,
             Constants.MEDIUM_SSD, (long) Constants.MB),
         ImmutableMap.of(Constants.MEDIUM_MEM, (long) Constants.KB,
             Constants.MEDIUM_SSD, (long) Constants.KB),
         ImmutableMap.of(), new HashMap<>(), RegisterWorkerPOptions.getDefaultInstance());
-    mWorkerId2 = mBlockMaster.getWorkerId(
+    long workerId2 = blockMaster.getWorkerId(
         new WorkerNetAddress().setHost("remote").setRpcPort(80).setDataPort(81).setWebPort(82));
-    mBlockMaster.workerRegister(mWorkerId2,
+    blockMaster.workerRegister(workerId2,
         Arrays.asList(Constants.MEDIUM_MEM, Constants.MEDIUM_SSD),
         ImmutableMap.of(Constants.MEDIUM_MEM, (long) Constants.MB,
             Constants.MEDIUM_SSD, (long) Constants.MB),
@@ -135,12 +132,29 @@ public class FileSystemMasterBase {
     Configuration.reloadProperties();
   }
 
-  public FileInfo createFile(long id) throws Exception {
-    return mFsMaster.createFile(new AlluxioURI("/file" + id), CreateFileContext.defaults());
+  // used for setup
+  public void createPathDepths(int depth) throws Exception {
+    mDepthPaths = new ArrayList<>(depth + 1);
+    StringBuilder pathBuilder = new StringBuilder("/");
+    mDepthPaths.add(pathBuilder.toString());
+    for (int i = 0; i < depth; i++) {
+      pathBuilder.append("next/");
+      String pathDepthI = pathBuilder.toString();
+      mDepthPaths.add(pathDepthI);
+      mFsMaster.createDirectory(new AlluxioURI(pathDepthI), CreateDirectoryContext.defaults());
+    }
   }
 
-  public void getStatus(long id, StreamObserver<GetStatusPResponse> responseObserver) {
-    mFsMasterServer.getStatus(GetStatusPRequest.newBuilder().setPath("/file" + id).build(),
+  // used for setup
+  public void createFile(int depth, long id) throws Exception {
+    AlluxioURI uri = new AlluxioURI(mDepthPaths.get(depth) + "file" + id);
+    mFsMaster.createFile(uri, CreateFileContext.defaults());
+  }
+
+  // used for benchmark
+  public void getStatus(int depth, long id, StreamObserver<GetStatusPResponse> responseObserver) {
+    String path = mDepthPaths.get(depth) + "file" + id;
+    mFsMasterServer.getStatus(GetStatusPRequest.newBuilder().setPath(path).build(),
         responseObserver);
   }
 }

@@ -11,6 +11,8 @@
 
 package alluxio.fsmaster;
 
+import alluxio.BaseFileStructure;
+import alluxio.BaseThreadState;
 import alluxio.grpc.GetStatusPResponse;
 import alluxio.security.authentication.AuthenticatedClientUser;
 
@@ -21,14 +23,12 @@ import org.openjdk.jmh.annotations.Fork;
 import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
-import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
-import org.openjdk.jmh.infra.ThreadParams;
 import org.openjdk.jmh.results.format.ResultFormatType;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -37,7 +37,6 @@ import org.openjdk.jmh.runner.options.CommandLineOptions;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
-import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -50,46 +49,25 @@ import java.util.concurrent.TimeUnit;
 public class FileSystemMasterBench {
 
   @State(Scope.Thread)
-  public static class ThreadState {
-    private static final long RAND_SEED = 12345;
-    long mNxtFileId;
-    int mMyId = 0;
-//    int mThreadCount = 0;
-    int mFileCount;
-
-    private long getNxtId() {
-      mNxtFileId++;
-      return mNxtFileId % mFileCount;
-    }
-
+  public static class ThreadState extends BaseThreadState {
     @Setup(Level.Trial)
-    public void setup(FileSystem fs, ThreadParams params) {
+    public void setup() {
       AuthenticatedClientUser.set("test");
-      mMyId = params.getThreadIndex();
-      mNxtFileId = new Random(RAND_SEED + mMyId).nextInt(fs.mFileCount);
-//      mThreadCount = params.getThreadCount();
-      mFileCount = fs.mFileCount;
     }
-  }
-
-  @Benchmark
-  public void getStatusBench(FileSystem fs, ThreadState ts, Blackhole bh) {
-    ServerCallStreamObserver<GetStatusPResponse> so = createStreamObserver(bh);
-    fs.mBase.getStatus(ts.getNxtId(), so);
   }
 
   @State(Scope.Benchmark)
-  public static class FileSystem {
-    @Param({"100", "10000", "1000000"})
-    public int mFileCount;
-
+  public static class FileSystem extends BaseFileStructure {
     public FileSystemMasterBase mBase;
 
     @Setup(Level.Trial)
     public void setup() throws Exception {
       mBase = new FileSystemMasterBase();
-      for (int i = 0; i < mFileCount; i++) {
-        mBase.createFile(i);
+      mBase.createPathDepths(mDepth);
+      for (int d = 0; d < mDepth + 1; d++) {
+        for (int i = 0; i < mFileCount; i++) {
+          mBase.createFile(d, i);
+        }
       }
     }
 
@@ -156,6 +134,13 @@ public class FileSystemMasterBench {
         bh.consume(new Object());
       }
     };
+  }
+
+  @Benchmark
+  public void getStatusBench(FileSystem fs, ThreadState ts, Blackhole bh) {
+    ServerCallStreamObserver<GetStatusPResponse> so = createStreamObserver(bh);
+    int depth = ts.nextDepth(fs);
+    fs.mBase.getStatus(depth, ts.nextFileId(fs, depth), so);
   }
 
   public static void main(String[] args) throws RunnerException, CommandLineOptionException {
