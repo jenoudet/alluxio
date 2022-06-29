@@ -17,7 +17,7 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import site.ycsb.generator.NumberGenerator;
-import site.ycsb.generator.SequentialGenerator;
+import site.ycsb.generator.UniformLongGenerator;
 import site.ycsb.generator.ZipfianGenerator;
 
 import java.util.ArrayList;
@@ -34,14 +34,14 @@ public class BaseFileStructure {
   @Param({"10", "100", "1000"})
   public int mFileCount;
 
-  @Param({"SEQUENTIAL", "ZIPF"})
+  @Param({"UNIFORM", "ZIPF"})
   public Distribution mDistribution;
 
   // each depth level needs its own file id generator
   public ArrayList<NumberGenerator> mFileGenerators = new ArrayList<>();
   public NumberGenerator mDepthGenerator;
 
-  public enum Distribution { SEQUENTIAL, ZIPF }
+  public enum Distribution { UNIFORM, ZIPF }
 
   @Setup(Level.Trial)
   public void init() {
@@ -53,9 +53,9 @@ public class BaseFileStructure {
         }
         break;
       default:
-        mDepthGenerator = new SequentialGenerator(0, mDepth);
+        mDepthGenerator = new UniformLongGenerator(0, mDepth);
         for (int i = 0; i < mDepth + 1; i++) {
-          mFileGenerators.add(new SequentialGenerator(0, mFileCount - 1));
+          mFileGenerators.add(new UniformLongGenerator(0, mFileCount - 1));
         }
     }
   }

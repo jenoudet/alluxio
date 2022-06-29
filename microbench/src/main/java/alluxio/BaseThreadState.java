@@ -17,30 +17,16 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.infra.ThreadParams;
 
-import java.util.Random;
-
 /**
  * Captures commonly reused thread state such as ID and file name and depth to poll.
  */
 @State(Scope.Thread)
 public class BaseThreadState {
-  private static final long RAND_SEED = 12345;
-
-  protected int mMyId;
-  protected int mNxtDepth;
-  protected long []mNxtFileId;
-  protected int mNumFiles;
+  public int mMyId;
 
   @Setup(Level.Iteration)
-  public void init(BaseFileStructure structure, ThreadParams params) {
-    mNumFiles = structure.mFileCount;
-    mNxtFileId = new long[structure.mDepth + 1];
+  public void init(ThreadParams params) {
     mMyId = params.getThreadIndex();
-    Random rand = new Random(RAND_SEED + mMyId);
-    for (int i = 0; i <= structure.mDepth; i++) {
-      mNxtFileId[i] = rand.nextInt(mNumFiles);
-    }
-    mNxtDepth = rand.nextInt(structure.mDepth + 1);
   }
 
   public int nextDepth(BaseFileStructure structure) {
