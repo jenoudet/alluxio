@@ -34,13 +34,11 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import javax.annotation.concurrent.NotThreadSafe;
 
 /**
- * The fault-tolerant version of {@link AlluxioMaster} that uses zookeeper and standby masters.
+ * The fault-tolerant version of {@link AlluxioMasterProcess} that uses standby masters.
  */
-@NotThreadSafe
-final class FaultTolerantAlluxioMasterProcess extends AlluxioMasterProcess {
+class FaultTolerantAlluxioMasterProcess extends AlluxioMasterProcess {
   private static final Logger LOG =
       LoggerFactory.getLogger(FaultTolerantAlluxioMasterProcess.class);
 
@@ -106,17 +104,11 @@ final class FaultTolerantAlluxioMasterProcess extends AlluxioMasterProcess {
       if (!mRunning) {
         break;
       }
-      try {
-        if (!gainPrimacy()) {
-          continue;
-        }
-      } catch (Throwable t) {
-        if (Configuration.getBoolean(PropertyKey.MASTER_JOURNAL_BACKUP_WHEN_CORRUPTED)) {
-          takeEmergencyBackup();
-        }
-        throw t;
+      if (gainPrimacy()) {
+        mLeaderSelector.waitForState(State.STANDBY);
+      } else {
+        LOG.warn("Failed to gain primacy");
       }
-      mLeaderSelector.waitForState(State.STANDBY);
       if (Configuration.getBoolean(PropertyKey.MASTER_JOURNAL_EXIT_ON_DEMOTION)) {
         stop();
       } else {
@@ -136,7 +128,7 @@ final class FaultTolerantAlluxioMasterProcess extends AlluxioMasterProcess {
    *
    * @return whether the master successfully upgraded to primary
    */
-  private boolean gainPrimacy() throws Exception {
+  boolean gainPrimacy() throws Exception {
     LOG.info("Becoming a leader.");
     // Don't upgrade if this master's primacy is unstable.
     AtomicBoolean unstable = new AtomicBoolean(false);
@@ -150,15 +142,14 @@ final class FaultTolerantAlluxioMasterProcess extends AlluxioMasterProcess {
       try (Timer.Context ctx = MetricsSystem
           .timer(MetricKey.MASTER_JOURNAL_GAIN_PRIMACY_TIMER.getName()).time()) {
         mJournalSystem.gainPrimacy();
+      } catch (Throwable t) {
+        if (Configuration.getBoolean(PropertyKey.MASTER_JOURNAL_BACKUP_WHEN_CORRUPTED)) {
+          takeEmergencyBackup();
+        }
+        throw t;
       }
-      // We only check unstable here because mJournalSystem.gainPrimacy() is the only slow method
       if (unstable.get()) {
         LOG.info("Terminating an unstable attempt to become a leader.");
-        if (Configuration.getBoolean(PropertyKey.MASTER_JOURNAL_EXIT_ON_DEMOTION)) {
-          stop();
-        } else {
-          losePrimacy();
-        }
         return false;
       }
     }
@@ -166,7 +157,6 @@ final class FaultTolerantAlluxioMasterProcess extends AlluxioMasterProcess {
       startMasters(true);
     } catch (UnavailableException e) {
       LOG.warn("Error starting masters: {}", e.toString());
-      stopMasters();
       return false;
     }
     mServingThread = new Thread(() -> {
@@ -191,7 +181,7 @@ final class FaultTolerantAlluxioMasterProcess extends AlluxioMasterProcess {
     return true;
   }
 
-  private void losePrimacy() throws Exception {
+  void losePrimacy() throws Exception {
     LOG.info("Losing the leadership.");
     if (mServingThread != null) {
       stopLeaderServing();
