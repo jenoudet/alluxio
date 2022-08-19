@@ -144,6 +144,16 @@ function forward_signal {
   wait
 }
 
+function oue {
+  echo "oue"
+  cp /opt/alluxio-2.9.0-SNAPSHOT/hs*.log /tmp/
+  cp /opt/alluxio-2.9.0-SNAPSHOT/core* /tmp/
+  echo "thread apply all bt" > temp.txt
+  date > gdb.txt
+  gdb -x=temp.txt "$JAVA_HOME"/bin/java /opt/alluxio-2.9.0-SNAPSHOT/core >> gdb.txt
+  cp gdb.txt /tmp/
+}
+
 # Sets up traps on all signals [1, 31]
 #
 # Notes about trapping some signals
@@ -156,6 +166,9 @@ function setup_signals {
   for i in {1..31}; do
     trap "forward_signal ${i}" ${i}
   done
+
+  trap "oue" SIGSEGV
+  trap "oue" 17
 
   # If the script exits for any reason without a signal, forward a SIGHUP to the children
   trap "forward_signal 1" EXIT
@@ -224,6 +237,9 @@ function main {
     exit 1
   fi
 
+  sysctl -w kernel.perf_event_paranoid=1
+  sysctl -w kernel.kptr_restrict=0
+
   local service="$1"
   OPTIONS="$2"
 
@@ -286,17 +302,19 @@ function main {
   fi
 
   # Only a single process is going to be started, simply exec and replace in the shell
-  if [ "${#processes[@]}" -eq 1 ]; then
-    exec ./bin/launch-process "${processes[0]}" -c
-  fi
+#  if [ "${#processes[@]}" -eq 1 ]; then
+#    exec ./bin/launch-process "${processes[0]}" -c
+#  fi
 
   # Multiple processes may be running, so manage them by forwarding any signals to them.
   setup_signals
 
   for proc in "${processes[@]}"; do
-    ./bin/launch-process "${proc}" -c &
+    ./bin/launch-process "${proc}" -c
   done
-  wait
+#  wait
+  echo "here"
+  cp /opt/alluxio-2.9.0-SNAPSHOT/hs*.log /tmp/
 }
 
 main "$@"

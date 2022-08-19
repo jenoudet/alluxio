@@ -77,7 +77,7 @@ ENV TINI_VERSION v0.18.0
 ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static /usr/local/bin/tini
 RUN chmod +x /usr/local/bin/tini
 
-RUN apk add --no-cache openjdk8 openjdk8-jre-lib unzip vim
+RUN apk add --no-cache openjdk8 openjdk8-jre-lib gdb unzip vim
 
 ENV JAVA_HOME /usr/lib/jvm/java-1.8-openjdk
 
