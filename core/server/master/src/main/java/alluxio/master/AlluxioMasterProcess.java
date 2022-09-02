@@ -37,6 +37,8 @@ import alluxio.master.journal.raft.RaftJournalSystem;
 import alluxio.master.journal.ufs.UfsJournalSingleMasterPrimarySelector;
 import alluxio.master.meta.DefaultMetaMaster;
 import alluxio.master.meta.MetaMaster;
+import alluxio.master.services.MasterProcessMicroservice;
+import alluxio.master.services.web.WebServerMicroservice;
 import alluxio.metrics.MetricKey;
 import alluxio.metrics.MetricsSystem;
 import alluxio.resource.CloseableResource;
@@ -51,7 +53,6 @@ import alluxio.util.URIUtils;
 import alluxio.util.WaitForOptions;
 import alluxio.util.interfaces.Scoped;
 import alluxio.util.network.NetworkAddressUtils;
-import alluxio.web.MasterWebServer;
 import alluxio.wire.BackupStatus;
 
 import com.codahale.metrics.Timer;
@@ -64,6 +65,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -106,6 +109,8 @@ public class AlluxioMasterProcess extends MasterProcess {
   /** See {@link #isRunning()}. */
   private volatile boolean mRunning = false;
 
+  private final Set<MasterProcessMicroservice> mMasterProcessMicroservices = new HashSet<>();
+
   /**
    * Creates a new {@link AlluxioMasterProcess}.
    */
@@ -137,6 +142,10 @@ public class AlluxioMasterProcess extends MasterProcess {
     LOG.info("New process created.");
   }
 
+  void registerMasterProcessService(MasterProcessMicroservice masterProcessMicroservice) {
+    mMasterProcessMicroservices.add(masterProcessMicroservice);
+  }
+
   @Override
   public <T extends Master> T getMaster(Class<T> clazz) {
     return mRegistry.get(clazz);
@@ -151,12 +160,7 @@ public class AlluxioMasterProcess extends MasterProcess {
 
   @Override
   public InetSocketAddress getWebAddress() {
-    synchronized (mWebServerLock) {
-      if (mWebServer != null) {
-        return new InetSocketAddress(mWebServer.getBindHost(), mWebServer.getLocalPort());
-      }
-      return NetworkAddressUtils.getConnectAddress(ServiceType.MASTER_WEB, Configuration.global());
-    }
+    return NetworkAddressUtils.getBindAddress(ServiceType.MASTER_WEB, Configuration.global());
   }
 
   @Override
@@ -169,6 +173,7 @@ public class AlluxioMasterProcess extends MasterProcess {
     LOG.info("Process starting.");
     mRunning = true;
     startCommonServices();
+    mMasterProcessMicroservices.forEach(MasterProcessMicroservice::start);
     mJournalSystem.start();
     startMasters(false);
     startJvmMonitorProcess();
@@ -198,6 +203,7 @@ public class AlluxioMasterProcess extends MasterProcess {
       if (!mRunning) {
         break;
       }
+      mMasterProcessMicroservices.forEach(MasterProcessMicroservice::promote);
       try {
         if (!gainPrimacy()) {
           continue;
@@ -215,6 +221,7 @@ public class AlluxioMasterProcess extends MasterProcess {
         if (!mRunning) {
           break;
         }
+        mMasterProcessMicroservices.forEach(MasterProcessMicroservice::demote);
         losePrimacy();
       }
     }
@@ -402,23 +409,6 @@ public class AlluxioMasterProcess extends MasterProcess {
   }
 
   /**
-   * Starts serving web ui server, resetting master web port, adding the metrics servlet to the web
-   * server and starting web ui.
-   */
-  protected void startServingWebServer() {
-    LOG.info("Alluxio master web server version {}. webAddress={}",
-        RuntimeConstants.VERSION, mWebBindAddress);
-    stopRejectingWebServer();
-    synchronized (mWebServerLock) {
-      mWebServer =
-          new MasterWebServer(ServiceType.MASTER_WEB.getServiceName(), mWebBindAddress, this);
-      // reset master web port
-      // start web ui
-      mWebServer.start();
-    }
-  }
-
-  /**
    * Starts jvm monitor process, to monitor jvm.
    */
   protected void startJvmMonitorProcess() {
@@ -474,6 +464,7 @@ public class AlluxioMasterProcess extends MasterProcess {
       }
       LOG.info("Stopping...");
       mRunning = false;
+      mMasterProcessMicroservices.forEach(MasterProcessMicroservice::stop);
       stopCommonServices();
       if (mLeaderSelector != null) {
         mLeaderSelector.stop();
@@ -581,22 +572,12 @@ public class AlluxioMasterProcess extends MasterProcess {
   /**
    * Stops all services.
    */
-  protected void stopServing() throws Exception {
+  protected void stopServing() {
     stopServingGrpc();
     MetricsSystem.stopSinks();
-    stopServingWebServer();
     // stop JVM monitor process
     if (mJvmPauseMonitor != null) {
       mJvmPauseMonitor.stop();
-    }
-  }
-
-  protected void stopServingWebServer() throws Exception {
-    synchronized (mWebServerLock) {
-      if (mWebServer != null) {
-        mWebServer.stop();
-        mWebServer = null;
-      }
     }
   }
 
@@ -637,13 +618,6 @@ public class AlluxioMasterProcess extends MasterProcess {
       MetricsSystem.startSinks(
           Configuration.getString(PropertyKey.METRICS_CONF_FILE));
     }
-
-    // Same as the metrics sink service
-    if ((mLeaderSelector.getState() == NodeState.STANDBY && standbyWebEnabled)
-        || (mLeaderSelector.getState() == NodeState.PRIMARY && !standbyWebEnabled)) {
-      LOG.info("Start web server.");
-      startServingWebServer();
-    }
   }
 
   void stopCommonServicesIfNecessary() throws Exception {
@@ -651,11 +625,6 @@ public class AlluxioMasterProcess extends MasterProcess {
         PropertyKey.STANDBY_MASTER_METRICS_SINK_ENABLED)) {
       LOG.info("Stop metric sinks.");
       MetricsSystem.stopSinks();
-    }
-    if (!Configuration.getBoolean(
-        PropertyKey.STANDBY_MASTER_WEB_ENABLED)) {
-      LOG.info("Stop web server.");
-      stopServingWebServer();
     }
   }
 
@@ -683,7 +652,10 @@ public class AlluxioMasterProcess extends MasterProcess {
       } else {
         primarySelector = new UfsJournalSingleMasterPrimarySelector();
       }
-      return new AlluxioMasterProcess(journalSystem, primarySelector);
+      AlluxioMasterProcess process = new AlluxioMasterProcess(journalSystem, primarySelector);
+      MasterProcessMicroservice service = WebServerMicroservice.create(process);
+      process.registerMasterProcessService(service);
+      return process;
     }
 
     private Factory() {} // prevent instantiation
