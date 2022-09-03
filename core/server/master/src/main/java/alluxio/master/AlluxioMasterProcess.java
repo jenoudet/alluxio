@@ -160,7 +160,7 @@ public class AlluxioMasterProcess extends MasterProcess {
 
   @Override
   public InetSocketAddress getWebAddress() {
-    return NetworkAddressUtils.getBindAddress(ServiceType.MASTER_WEB, Configuration.global());
+    return mWebBindAddress;
   }
 
   @Override
@@ -318,7 +318,7 @@ public class AlluxioMasterProcess extends MasterProcess {
   }
 
   protected void stopCommonServices() throws Exception {
-    stopRejectingServers();
+    stopRejectingRpcServer();
     stopServing();
     mJournalSystem.stop();
     LOG.info("Closing all masters.");
@@ -387,7 +387,7 @@ public class AlluxioMasterProcess extends MasterProcess {
       }
       mSafeModeManager.notifyPrimaryMasterStarted();
     } else {
-      startRejectingServers();
+      startRejectingRpcServer();
     }
     mRegistry.start(isLeader);
     // Signal state-lock-manager that masters are ready.

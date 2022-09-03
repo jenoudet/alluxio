@@ -241,10 +241,18 @@ public abstract class MasterProcess implements Process {
   }
 
   protected void startRejectingServers() {
+    startRejectingRpcServer();
+    startRejectingWebServer();
+  }
+
+  protected void startRejectingRpcServer() {
     if (mRejectingRpcServer == null) {
       mRejectingRpcServer = new RejectingServer(mRpcBindAddress);
       mRejectingRpcServer.start();
     }
+  }
+
+  protected void startRejectingWebServer() {
     if (!isWebServing() && mRejectingWebServer == null) {
       mRejectingWebServer = new RejectingServer(mWebBindAddress);
       mRejectingWebServer.start();

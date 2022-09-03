@@ -50,7 +50,6 @@ public abstract class WebServerMicroservice implements MasterProcessMicroservice
     }
     if (port == 0) {
       try (ServerSocket s = new ServerSocket(0)) {
-        s.setReuseAddress(true);
         Configuration.set(mServiceType.getPortKey(), s.getLocalPort());
       } catch (IOException e) {
         throw new RuntimeException(e);
