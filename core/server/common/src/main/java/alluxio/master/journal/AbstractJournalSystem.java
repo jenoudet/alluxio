@@ -43,6 +43,9 @@ public abstract class AbstractJournalSystem implements JournalSystem {
   @Override
   public synchronized void start() {
     Preconditions.checkState(!mRunning, "Journal is already running");
+    if (!isFormatted()) {
+      throw new RuntimeException(String.format("Journal %s has not been formatted!", this));
+    }
     startInternal();
     mRunning = true;
   }

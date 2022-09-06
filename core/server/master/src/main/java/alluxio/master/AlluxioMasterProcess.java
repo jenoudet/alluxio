@@ -32,12 +32,12 @@ import alluxio.grpc.NodeState;
 import alluxio.master.journal.DefaultJournalMaster;
 import alluxio.master.journal.JournalMasterClientServiceHandler;
 import alluxio.master.journal.JournalSystem;
-import alluxio.master.journal.JournalUtils;
 import alluxio.master.journal.raft.RaftJournalSystem;
 import alluxio.master.journal.ufs.UfsJournalSingleMasterPrimarySelector;
 import alluxio.master.meta.DefaultMetaMaster;
 import alluxio.master.meta.MetaMaster;
 import alluxio.master.microservices.MasterProcessMicroservice;
+import alluxio.master.microservices.journaling.JournalingMicroservice;
 import alluxio.master.microservices.metrics.MetricsSinkMicroservice;
 import alluxio.master.microservices.web.WebServerMicroservice;
 import alluxio.metrics.MetricKey;
@@ -47,16 +47,13 @@ import alluxio.underfs.MasterUfsManager;
 import alluxio.underfs.UnderFileSystem;
 import alluxio.underfs.UnderFileSystemConfiguration;
 import alluxio.util.CommonUtils;
-import alluxio.util.CommonUtils.ProcessType;
 import alluxio.util.JvmPauseMonitor;
 import alluxio.util.ThreadUtils;
 import alluxio.util.URIUtils;
 import alluxio.util.WaitForOptions;
-import alluxio.util.interfaces.Scoped;
 import alluxio.util.network.NetworkAddressUtils;
 import alluxio.wire.BackupStatus;
 
-import com.codahale.metrics.Timer;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 import org.slf4j.Logger;
@@ -65,7 +62,6 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
-import java.net.URI;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
@@ -118,10 +114,6 @@ public class AlluxioMasterProcess extends MasterProcess {
    */
   AlluxioMasterProcess(JournalSystem journalSystem, PrimarySelector leaderSelector) {
     super(journalSystem, leaderSelector, ServiceType.MASTER_WEB, ServiceType.MASTER_RPC);
-    if (!mJournalSystem.isFormatted()) {
-      throw new RuntimeException(
-          String.format("Journal %s has not been formatted!", mJournalSystem));
-    }
     // Create masters.
     String baseDir = Configuration.getString(PropertyKey.MASTER_METASTORE_DIR);
     mContext = CoreMasterContext.newBuilder()
@@ -186,16 +178,8 @@ public class AlluxioMasterProcess extends MasterProcess {
     LOG.info("Process starting.");
     mRunning = true;
     mMasterProcessMicroservices.forEach(MasterProcessMicroservice::start);
-    mJournalSystem.start();
     startMasters(false);
     startJvmMonitorProcess();
-
-    // Perform the initial catchup before joining leader election,
-    // to avoid potential delay if this master is selected as leader
-    if (Configuration.getBoolean(PropertyKey.MASTER_JOURNAL_CATCHUP_PROTECT_ENABLED)) {
-      LOG.info("Waiting for journals to catch up.");
-      mJournalSystem.waitForCatchup();
-    }
 
     LOG.info("Starting leader selector.");
     mLeaderSelector.start(getRpcAddress());
@@ -205,18 +189,14 @@ public class AlluxioMasterProcess extends MasterProcess {
         LOG.info("master process is not running. Breaking out");
         break;
       }
-      if (Configuration.getBoolean(PropertyKey.MASTER_JOURNAL_CATCHUP_PROTECT_ENABLED)) {
-        LOG.info("Waiting for journals to catch up.");
-        mJournalSystem.waitForCatchup();
-      }
 
       LOG.info("Started in stand-by mode.");
       mLeaderSelector.waitForState(NodeState.PRIMARY);
       if (!mRunning) {
         break;
       }
-      mMasterProcessMicroservices.forEach(MasterProcessMicroservice::promote);
       try {
+        mMasterProcessMicroservices.forEach(MasterProcessMicroservice::promote);
         if (!gainPrimacy()) {
           continue;
         }
@@ -249,35 +229,11 @@ public class AlluxioMasterProcess extends MasterProcess {
    */
   private boolean gainPrimacy() throws Exception {
     LOG.info("Becoming a leader.");
-    // Don't upgrade if this master's primacy is unstable.
-    AtomicBoolean unstable = new AtomicBoolean(false);
-    try (Scoped scoped = mLeaderSelector.onStateChange(state -> unstable.set(true))) {
-      if (mLeaderSelector.getState() != NodeState.PRIMARY) {
-        LOG.info("Lost leadership while becoming a leader.");
-        unstable.set(true);
-      }
-      stopMasters();
-      LOG.info("Standby stopped");
-      try (Timer.Context ctx = MetricsSystem
-          .timer(MetricKey.MASTER_JOURNAL_GAIN_PRIMACY_TIMER.getName()).time()) {
-        mJournalSystem.gainPrimacy();
-      }
-      // We only check unstable here because mJournalSystem.gainPrimacy() is the only slow method
-      if (unstable.get()) {
-        LOG.info("Terminating an unstable attempt to become a leader.");
-        if (Configuration.getBoolean(PropertyKey.MASTER_JOURNAL_EXIT_ON_DEMOTION)) {
-          stop();
-        } else {
-          losePrimacy();
-        }
-        return false;
-      }
-    }
+    stopMasters();
     try {
       startMasters(true);
     } catch (UnavailableException e) {
       LOG.warn("Error starting masters: {}", e.toString());
-      mJournalSystem.losePrimacy();
       stopMasters();
       return false;
     }
@@ -307,11 +263,6 @@ public class AlluxioMasterProcess extends MasterProcess {
     if (mServingThread != null) {
       stopServingGrpc();
     }
-    // Put the journal in standby mode ASAP to avoid interfering with the new primary. This must
-    // happen after stopServing because downgrading the journal system will reset master state,
-    // which could cause NPEs for outstanding RPC threads. We need to first close all client
-    // sockets in stopServing so that clients don't see NPEs.
-    mJournalSystem.losePrimacy();
     if (mServingThread != null) {
       mServingThread.join(mServingThreadTimeoutMs);
       if (mServingThread.isAlive()) {
@@ -330,7 +281,6 @@ public class AlluxioMasterProcess extends MasterProcess {
   protected void stopCommonServices() throws Exception {
     stopRejectingRpcServer();
     stopServing();
-    mJournalSystem.stop();
     LOG.info("Closing all masters.");
     mRegistry.close();
     LOG.info("Closed all masters.");
@@ -615,9 +565,9 @@ public class AlluxioMasterProcess extends MasterProcess {
      * @return a new instance of {@link MasterProcess} using the given sockets for the master
      */
     public static AlluxioMasterProcess create() {
-      URI journalLocation = JournalUtils.getJournalLocation();
-      JournalSystem journalSystem = new JournalSystem.Builder()
-          .setLocation(journalLocation).build(ProcessType.MASTER);
+      MasterProcessMicroservice journalingMicroservice = JournalingMicroservice.create();
+      JournalSystem journalSystem =
+          ((JournalingMicroservice) journalingMicroservice).getJournalSystem();
       final PrimarySelector primarySelector;
       if (Configuration.getBoolean(PropertyKey.ZOOKEEPER_ENABLED)) {
         Preconditions.checkState(!(journalSystem instanceof RaftJournalSystem),
@@ -629,6 +579,7 @@ public class AlluxioMasterProcess extends MasterProcess {
         primarySelector = new UfsJournalSingleMasterPrimarySelector();
       }
       AlluxioMasterProcess process = new AlluxioMasterProcess(journalSystem, primarySelector);
+      process.registerMasterProcessMicroservice(journalingMicroservice);
       MasterProcessMicroservice webMicroservice = WebServerMicroservice.create(process);
       process.registerMasterProcessMicroservice(webMicroservice);
       MasterProcessMicroservice metricsSinkMicroservice = MetricsSinkMicroservice.create();
