@@ -16,20 +16,15 @@ import static org.junit.Assert.assertTrue;
 
 import alluxio.conf.Configuration;
 import alluxio.conf.PropertyKey;
-import alluxio.grpc.NodeState;
-import alluxio.master.journal.JournalSystem;
 import alluxio.master.journal.JournalType;
 import alluxio.master.journal.JournalUtils;
 import alluxio.master.journal.ufs.UfsJournal;
 import alluxio.master.journal.ufs.UfsJournalLogWriter;
-import alluxio.master.journal.ufs.UfsJournalSingleMasterPrimarySelector;
 import alluxio.master.journal.ufs.UfsJournalSystem;
 import alluxio.proto.journal.File;
 import alluxio.proto.journal.Journal;
-import alluxio.util.CommonUtils;
 import alluxio.util.URIUtils;
 
-import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -49,44 +44,18 @@ public class AlluxioMasterProcessEmergencyBackupTest {
   @Rule
   public TemporaryFolder mFolder = new TemporaryFolder();
 
-  @Before
-  public void before() throws Exception {
-    Configuration.reloadProperties();
+  @Test
+  public void failToGainPrimacyWhenJournalCorrupted() throws Exception {
     Configuration.set(PropertyKey.MASTER_RPC_PORT, mRpcPortRule.getPort());
     Configuration.set(PropertyKey.MASTER_WEB_PORT, mWebPortRule.getPort());
     Configuration.set(PropertyKey.MASTER_METASTORE_DIR, mFolder.newFolder("metastore"));
     Configuration.set(PropertyKey.USER_METRICS_COLLECTION_ENABLED, false);
     Configuration.set(PropertyKey.MASTER_JOURNAL_FOLDER, mFolder.newFolder("journal"));
-  }
-
-  @Test
-  public void failToGainPrimacyWhenJournalCorrupted() throws Exception {
     Configuration.set(PropertyKey.MASTER_JOURNAL_TYPE, JournalType.UFS);
     Configuration.set(PropertyKey.MASTER_JOURNAL_BACKUP_WHEN_CORRUPTED, false);
     URI journalLocation = JournalUtils.getJournalLocation();
-    JournalSystem journalSystem = new JournalSystem.Builder()
-        .setLocation(journalLocation).build(CommonUtils.ProcessType.MASTER);
-    AlluxioMasterProcess masterProcess = new AlluxioMasterProcess(journalSystem,
-        new UfsJournalSingleMasterPrimarySelector());
-    corruptJournalAndStartMasterProcess(masterProcess, journalLocation);
-  }
+    AlluxioMasterProcess masterProcess = AlluxioMasterProcess.Factory.create();
 
-  @Test
-  public void failToGainPrimacyWhenJournalCorruptedHA() throws Exception {
-    Configuration.set(PropertyKey.MASTER_JOURNAL_TYPE, JournalType.UFS);
-    Configuration.set(PropertyKey.MASTER_JOURNAL_BACKUP_WHEN_CORRUPTED, false);
-    URI journalLocation = JournalUtils.getJournalLocation();
-    JournalSystem journalSystem = new JournalSystem.Builder()
-        .setLocation(journalLocation).build(CommonUtils.ProcessType.MASTER);
-    ControllablePrimarySelector primarySelector = new ControllablePrimarySelector();
-    AlluxioMasterProcess masterProcess =
-        new AlluxioMasterProcess(journalSystem, primarySelector);
-    primarySelector.setState(NodeState.PRIMARY);
-    corruptJournalAndStartMasterProcess(masterProcess, journalLocation);
-  }
-
-  private void corruptJournalAndStartMasterProcess(AlluxioMasterProcess masterProcess,
-      URI journalLocation) throws Exception {
     assertTrue(masterProcess.mJournalSystem instanceof UfsJournalSystem);
     masterProcess.mJournalSystem.format();
     // corrupt the journal

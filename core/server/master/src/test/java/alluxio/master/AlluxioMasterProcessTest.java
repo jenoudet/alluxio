@@ -23,6 +23,8 @@ import alluxio.master.journal.JournalUtils;
 import alluxio.master.journal.noop.NoopJournalSystem;
 import alluxio.master.journal.raft.RaftJournalSystem;
 import alluxio.master.journal.ufs.UfsJournalSingleMasterPrimarySelector;
+import alluxio.master.microservices.metrics.MetricsSinkMicroservice;
+import alluxio.master.microservices.web.WebServerMicroservice;
 import alluxio.util.CommonUtils;
 import alluxio.util.WaitForOptions;
 import alluxio.util.io.FileUtils;
@@ -112,6 +114,8 @@ public final class AlluxioMasterProcessTest {
   public void startStopPrimary() throws Exception {
     AlluxioMasterProcess master = new AlluxioMasterProcess(new NoopJournalSystem(),
         new UfsJournalSingleMasterPrimarySelector());
+    master.registerMasterProcessMicroservice(WebServerMicroservice.create(master));
+    master.registerMasterProcessMicroservice(MetricsSinkMicroservice.create());
     Thread t = new Thread(() -> {
       try {
         master.start();
@@ -127,6 +131,8 @@ public final class AlluxioMasterProcessTest {
   public void startStopStandby() throws Exception {
     AlluxioMasterProcess master = new AlluxioMasterProcess(
         new NoopJournalSystem(), new AlwaysStandbyPrimarySelector());
+    master.registerMasterProcessMicroservice(WebServerMicroservice.create(master));
+    master.registerMasterProcessMicroservice(MetricsSinkMicroservice.create());
     Thread t = new Thread(() -> {
       try {
         master.start();
@@ -147,6 +153,8 @@ public final class AlluxioMasterProcessTest {
     Configuration.set(PropertyKey.MASTER_JOURNAL_EXIT_ON_DEMOTION, true);
     AlluxioMasterProcess master = new AlluxioMasterProcess(
         new NoopJournalSystem(), primarySelector);
+    master.registerMasterProcessMicroservice(WebServerMicroservice.create(master));
+    master.registerMasterProcessMicroservice(MetricsSinkMicroservice.create());
     AlluxioMasterProcess spy = Mockito.spy(master);
     Mockito.doAnswer(invocation -> { throw new UnavailableException("unavailable"); })
         .when(spy).startMasters(true);
@@ -176,6 +184,8 @@ public final class AlluxioMasterProcessTest {
     Configuration.set(PropertyKey.MASTER_JOURNAL_EXIT_ON_DEMOTION, true);
     AlluxioMasterProcess master = new AlluxioMasterProcess(
         new NoopJournalSystem(), primarySelector);
+    master.registerMasterProcessMicroservice(WebServerMicroservice.create(master));
+    master.registerMasterProcessMicroservice(MetricsSinkMicroservice.create());
     Thread t = new Thread(() -> {
       try {
         master.start();
@@ -203,7 +213,6 @@ public final class AlluxioMasterProcessTest {
   /**
    * This test ensures that given a root UFS which is <i>not</i> local, that we can still provide a
    * local path to an Alluxio backup and start the master.
-   *
    * This test is ignored because it requires adding a new UFS dependency in the test scope, but
    * adding the alluxio-underfs-web dependency causes the module to hang in the  builds even after
    * the test completes. The hang seems to be due to a bug in maven 3.5.4.
@@ -227,6 +236,8 @@ public final class AlluxioMasterProcessTest {
     AlluxioMasterProcess master = new AlluxioMasterProcess(
         new RaftJournalSystem(JournalUtils.getJournalLocation(), ServiceType.MASTER_RAFT),
         new UfsJournalSingleMasterPrimarySelector());
+    master.registerMasterProcessMicroservice(WebServerMicroservice.create(master));
+    master.registerMasterProcessMicroservice(MetricsSinkMicroservice.create());
     Thread t = new Thread(() -> {
       try {
         master.start();

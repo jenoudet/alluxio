@@ -37,8 +37,9 @@ import alluxio.master.journal.raft.RaftJournalSystem;
 import alluxio.master.journal.ufs.UfsJournalSingleMasterPrimarySelector;
 import alluxio.master.meta.DefaultMetaMaster;
 import alluxio.master.meta.MetaMaster;
-import alluxio.master.services.MasterProcessMicroservice;
-import alluxio.master.services.web.WebServerMicroservice;
+import alluxio.master.microservices.MasterProcessMicroservice;
+import alluxio.master.microservices.metrics.MetricsSinkMicroservice;
+import alluxio.master.microservices.web.WebServerMicroservice;
 import alluxio.metrics.MetricKey;
 import alluxio.metrics.MetricsSystem;
 import alluxio.resource.CloseableResource;
@@ -66,6 +67,7 @@ import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -142,7 +144,7 @@ public class AlluxioMasterProcess extends MasterProcess {
     LOG.info("New process created.");
   }
 
-  void registerMasterProcessService(MasterProcessMicroservice masterProcessMicroservice) {
+  void registerMasterProcessMicroservice(MasterProcessMicroservice masterProcessMicroservice) {
     mMasterProcessMicroservices.add(masterProcessMicroservice);
   }
 
@@ -159,8 +161,19 @@ public class AlluxioMasterProcess extends MasterProcess {
   }
 
   @Override
+  public boolean isWebServing() {
+    return mMasterProcessMicroservices.stream()
+        .anyMatch(microservice -> microservice instanceof WebServerMicroservice
+            && ((WebServerMicroservice) microservice).isServing());
+  }
+
+  @Override
   public InetSocketAddress getWebAddress() {
-    return mWebBindAddress;
+    Optional<InetSocketAddress> webAddress = mMasterProcessMicroservices.stream()
+        .filter(microservice -> microservice instanceof WebServerMicroservice)
+        .map(m -> ((WebServerMicroservice) m).getAddress()).findFirst();
+    return webAddress.orElseGet(() -> NetworkAddressUtils.getConnectAddress(ServiceType.MASTER_WEB,
+        Configuration.global()));
   }
 
   @Override
@@ -172,7 +185,6 @@ public class AlluxioMasterProcess extends MasterProcess {
   public void start() throws Exception {
     LOG.info("Process starting.");
     mRunning = true;
-    startCommonServices();
     mMasterProcessMicroservices.forEach(MasterProcessMicroservice::start);
     mJournalSystem.start();
     startMasters(false);
@@ -271,7 +283,6 @@ public class AlluxioMasterProcess extends MasterProcess {
     }
     mServingThread = new Thread(() -> {
       try {
-        startCommonServices();
         startMasterServing(" (gained leadership)", " (lost leadership)");
       } catch (Throwable t) {
         Throwable root = Throwables.getRootCause(t);
@@ -295,7 +306,6 @@ public class AlluxioMasterProcess extends MasterProcess {
     LOG.info("Losing the leadership.");
     if (mServingThread != null) {
       stopServingGrpc();
-      stopCommonServicesIfNecessary();
     }
     // Put the journal in standby mode ASAP to avoid interfering with the new primary. This must
     // happen after stopServing because downgrading the journal system will reset master state,
@@ -440,7 +450,6 @@ public class AlluxioMasterProcess extends MasterProcess {
   @Override
   protected void startServing(String startMessage, String stopMessage) {
     // start all common services for non-ha master or leader master
-    startCommonServices();
     startJvmMonitorProcess();
     startMasterServing(startMessage, stopMessage);
   }
@@ -574,7 +583,6 @@ public class AlluxioMasterProcess extends MasterProcess {
    */
   protected void stopServing() {
     stopServingGrpc();
-    MetricsSystem.stopSinks();
     // stop JVM monitor process
     if (mJvmPauseMonitor != null) {
       mJvmPauseMonitor.stop();
@@ -594,38 +602,6 @@ public class AlluxioMasterProcess extends MasterProcess {
   @Override
   public String toString() {
     return "Alluxio master @" + mRpcConnectAddress;
-  }
-
-  protected void startCommonServices() {
-    boolean standbyMetricsSinkEnabled =
-        Configuration.getBoolean(PropertyKey.STANDBY_MASTER_METRICS_SINK_ENABLED);
-    boolean standbyWebEnabled =
-        Configuration.getBoolean(PropertyKey.STANDBY_MASTER_WEB_ENABLED);
-    // Masters will always start from standby state, and later be elected to primary.
-    // If standby masters are enabled to start metric sink service,
-    // the service will have been started before the master is promoted to primary.
-    // Thus, when the master is primary, no need to start metric sink service again.
-    //
-    // Vice versa, if the standby masters do not start the metric sink service,
-    // the master should start the metric sink when it is primacy.
-    //
-    LOG.info("state is {}, standbyMetricsSinkEnabled is {}, standbyWebEnabled is {}",
-        mLeaderSelector.getState(), standbyMetricsSinkEnabled, standbyWebEnabled);
-    if ((mLeaderSelector.getState() == NodeState.STANDBY && standbyMetricsSinkEnabled)
-        || (mLeaderSelector.getState() == NodeState.PRIMARY
-        && !standbyMetricsSinkEnabled)) {
-      LOG.info("Start metric sinks.");
-      MetricsSystem.startSinks(
-          Configuration.getString(PropertyKey.METRICS_CONF_FILE));
-    }
-  }
-
-  void stopCommonServicesIfNecessary() throws Exception {
-    if (!Configuration.getBoolean(
-        PropertyKey.STANDBY_MASTER_METRICS_SINK_ENABLED)) {
-      LOG.info("Stop metric sinks.");
-      MetricsSystem.stopSinks();
-    }
   }
 
   /**
@@ -653,8 +629,10 @@ public class AlluxioMasterProcess extends MasterProcess {
         primarySelector = new UfsJournalSingleMasterPrimarySelector();
       }
       AlluxioMasterProcess process = new AlluxioMasterProcess(journalSystem, primarySelector);
-      MasterProcessMicroservice service = WebServerMicroservice.create(process);
-      process.registerMasterProcessService(service);
+      MasterProcessMicroservice webMicroservice = WebServerMicroservice.create(process);
+      process.registerMasterProcessMicroservice(webMicroservice);
+      MasterProcessMicroservice metricsSinkMicroservice = MetricsSinkMicroservice.create();
+      process.registerMasterProcessMicroservice(metricsSinkMicroservice);
       return process;
     }
 

@@ -9,7 +9,7 @@
  * See the NOTICE file distributed with this work for information regarding copyright ownership.
  */
 
-package alluxio.master.services.web;
+package alluxio.master.microservices.web;
 
 import alluxio.master.AlluxioMasterProcess;
 

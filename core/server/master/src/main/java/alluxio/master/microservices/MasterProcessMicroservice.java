@@ -9,7 +9,7 @@
  * See the NOTICE file distributed with this work for information regarding copyright ownership.
  */
 
-package alluxio.master.services;
+package alluxio.master.microservices;
 
 /**
  * Interface defining the behavior of services to be registered with the

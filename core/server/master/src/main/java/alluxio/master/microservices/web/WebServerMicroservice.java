@@ -9,12 +9,12 @@
  * See the NOTICE file distributed with this work for information regarding copyright ownership.
  */
 
-package alluxio.master.services.web;
+package alluxio.master.microservices.web;
 
 import alluxio.conf.Configuration;
 import alluxio.conf.PropertyKey;
 import alluxio.master.AlluxioMasterProcess;
-import alluxio.master.services.MasterProcessMicroservice;
+import alluxio.master.microservices.MasterProcessMicroservice;
 import alluxio.util.ConfigurationUtils;
 import alluxio.util.network.NetworkAddressUtils;
 import alluxio.util.network.NetworkAddressUtils.ServiceType;
@@ -40,6 +40,23 @@ public abstract class WebServerMicroservice implements MasterProcessMicroservice
   WebServerMicroservice(AlluxioMasterProcess masterProcess) {
     mMasterProcess = masterProcess;
     configureWebAddress();
+  }
+
+  /**
+   * @return whether the web server has been created and started
+   */
+  public synchronized boolean isServing() {
+    return mWebServer != null && mWebServer.getServer().isRunning();
+  }
+
+  /**
+   * @return the web address
+   */
+  public synchronized InetSocketAddress getAddress() {
+    if (mWebServer != null) {
+      return new InetSocketAddress(mWebServer.getBindHost(), mWebServer.getLocalPort());
+    }
+    return NetworkAddressUtils.getConnectAddress(ServiceType.MASTER_WEB, Configuration.global());
   }
 
   private void configureWebAddress() {

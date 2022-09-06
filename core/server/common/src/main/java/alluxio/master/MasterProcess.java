@@ -142,10 +142,6 @@ public abstract class MasterProcess implements Process {
     return mStartTimeMs;
   }
 
-  protected void startServing() {
-    startServing("", "");
-  }
-
   abstract void startServing(String startMessage, String stopMessage);
 
   /**
