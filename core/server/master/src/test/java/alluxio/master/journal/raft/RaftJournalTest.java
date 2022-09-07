@@ -522,7 +522,7 @@ public class RaftJournalTest {
     List<RaftJournalSystem> journalSystems = new ArrayList<>(journalSystemCount);
     for (int i = 0; i < journalSystemCount; i++) {
       journalSystems.add(new RaftJournalSystem(mFolder.newFolder().toURI(), clusterAddresses.get(i),
-           clusterAddresses));
+           clusterAddresses, new RaftPrimarySelector()));
     }
     return journalSystems;
   }
@@ -539,7 +539,8 @@ public class RaftJournalTest {
     List<Integer> freePorts = getFreePorts(1);
     InetSocketAddress joinAddr = InetSocketAddress.createUnresolved("localhost", freePorts.get(0));
     clusterAddresses.add(joinAddr);
-    return new RaftJournalSystem(mFolder.newFolder().toURI(), joinAddr, clusterAddresses);
+    return new RaftJournalSystem(mFolder.newFolder().toURI(), joinAddr, clusterAddresses,
+        new RaftPrimarySelector());
   }
 
   /**

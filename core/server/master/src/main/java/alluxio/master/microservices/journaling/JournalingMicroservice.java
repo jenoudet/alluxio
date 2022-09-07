@@ -14,17 +14,13 @@ package alluxio.master.microservices.journaling;
 import alluxio.conf.Configuration;
 import alluxio.conf.PropertyKey;
 import alluxio.master.journal.JournalSystem;
-import alluxio.master.journal.JournalUtils;
 import alluxio.master.microservices.MasterProcessMicroservice;
 import alluxio.metrics.MetricKey;
 import alluxio.metrics.MetricsSystem;
-import alluxio.util.CommonUtils;
 
 import com.codahale.metrics.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.net.URI;
 
 /**
  * Microservice that takes care of starting, promoting, and demoting the master's journal system.
@@ -76,11 +72,10 @@ public class JournalingMicroservice implements MasterProcessMicroservice {
   }
 
   /**
+   * @param journalSystem the journal system that this microservice will manage
    * @return the journaling microservice
    */
-  public static MasterProcessMicroservice create() {
-    URI journalLocation = JournalUtils.getJournalLocation();
-    return new JournalingMicroservice(new JournalSystem.Builder()
-        .setLocation(journalLocation).build(CommonUtils.ProcessType.MASTER));
+  public static MasterProcessMicroservice create(JournalSystem journalSystem) {
+    return new JournalingMicroservice(journalSystem);
   }
 }

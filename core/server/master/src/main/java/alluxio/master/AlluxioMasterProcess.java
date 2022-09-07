@@ -32,8 +32,12 @@ import alluxio.grpc.NodeState;
 import alluxio.master.journal.DefaultJournalMaster;
 import alluxio.master.journal.JournalMasterClientServiceHandler;
 import alluxio.master.journal.JournalSystem;
+import alluxio.master.journal.JournalType;
+import alluxio.master.journal.JournalUtils;
 import alluxio.master.journal.raft.RaftJournalSystem;
+import alluxio.master.journal.raft.RaftPrimarySelector;
 import alluxio.master.journal.ufs.UfsJournalSingleMasterPrimarySelector;
+import alluxio.master.journal.ufs.UfsJournalSystem;
 import alluxio.master.meta.DefaultMetaMaster;
 import alluxio.master.meta.MetaMaster;
 import alluxio.master.microservices.MasterProcessMicroservice;
@@ -47,6 +51,7 @@ import alluxio.underfs.MasterUfsManager;
 import alluxio.underfs.UnderFileSystem;
 import alluxio.underfs.UnderFileSystemConfiguration;
 import alluxio.util.CommonUtils;
+import alluxio.util.ConfigurationUtils;
 import alluxio.util.JvmPauseMonitor;
 import alluxio.util.ThreadUtils;
 import alluxio.util.URIUtils;
@@ -54,7 +59,6 @@ import alluxio.util.WaitForOptions;
 import alluxio.util.network.NetworkAddressUtils;
 import alluxio.wire.BackupStatus;
 
-import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,7 +66,9 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -565,20 +571,32 @@ public class AlluxioMasterProcess extends MasterProcess {
      * @return a new instance of {@link MasterProcess} using the given sockets for the master
      */
     public static AlluxioMasterProcess create() {
-      MasterProcessMicroservice journalingMicroservice = JournalingMicroservice.create();
-      JournalSystem journalSystem =
-          ((JournalingMicroservice) journalingMicroservice).getJournalSystem();
-      final PrimarySelector primarySelector;
-      if (Configuration.getBoolean(PropertyKey.ZOOKEEPER_ENABLED)) {
-        Preconditions.checkState(!(journalSystem instanceof RaftJournalSystem),
-            "Raft-based embedded journal and Zookeeper cannot be used at the same time.");
-        primarySelector = PrimarySelector.Factory.createZkPrimarySelector();
-      } else if (journalSystem instanceof RaftJournalSystem) {
-        primarySelector = ((RaftJournalSystem) journalSystem).getPrimarySelector();
+      PrimarySelector selector;
+      JournalSystem journalSystem;
+      // create primary selector and journal system based on static configuration
+      URI journalLocation = JournalUtils.getJournalLocation();
+      long quietTimeMs =
+          Configuration.getMs(PropertyKey.MASTER_JOURNAL_TAILER_SHUTDOWN_QUIET_WAIT_TIME_MS);
+      if (Configuration.getEnum(PropertyKey.MASTER_JOURNAL_TYPE, JournalType.class)
+          == JournalType.EMBEDDED) {
+        selector = new RaftPrimarySelector();
+        InetSocketAddress localAddress =
+            NetworkAddressUtils.getConnectAddress(ServiceType.MASTER_RAFT, Configuration.global());
+        List<InetSocketAddress> clusterAddresses =
+            ConfigurationUtils.getEmbeddedJournalAddresses(Configuration.global(),
+                ServiceType.MASTER_RAFT);
+        journalSystem = new RaftJournalSystem(journalLocation, localAddress, clusterAddresses,
+            (RaftPrimarySelector) selector);
+      } else if (Configuration.getBoolean(PropertyKey.ZOOKEEPER_ENABLED)) {
+        selector = PrimarySelector.Factory.createZkPrimarySelector();
+        journalSystem = new UfsJournalSystem(journalLocation, quietTimeMs);
       } else {
-        primarySelector = new UfsJournalSingleMasterPrimarySelector();
+        selector = new UfsJournalSingleMasterPrimarySelector();
+        journalSystem = new UfsJournalSystem(journalLocation, quietTimeMs);
       }
-      AlluxioMasterProcess process = new AlluxioMasterProcess(journalSystem, primarySelector);
+      AlluxioMasterProcess process = new AlluxioMasterProcess(journalSystem, selector);
+      MasterProcessMicroservice journalingMicroservice =
+          JournalingMicroservice.create(journalSystem);
       process.registerMasterProcessMicroservice(journalingMicroservice);
       MasterProcessMicroservice webMicroservice = WebServerMicroservice.create(process);
       process.registerMasterProcessMicroservice(webMicroservice);

@@ -16,7 +16,6 @@ import alluxio.conf.PropertyKey;
 import alluxio.grpc.GrpcService;
 import alluxio.master.Master;
 import alluxio.master.StateLockManager;
-import alluxio.master.journal.noop.NoopJournalSystem;
 import alluxio.master.journal.raft.RaftJournalSystem;
 import alluxio.master.journal.sink.JournalSink;
 import alluxio.master.journal.ufs.UfsJournalSystem;
@@ -281,8 +280,6 @@ public interface JournalSystem {
       JournalType journalType =
           Configuration.getEnum(PropertyKey.MASTER_JOURNAL_TYPE, JournalType.class);
       switch (journalType) {
-        case NOOP:
-          return new NoopJournalSystem();
         case UFS:
           return new UfsJournalSystem(mLocation, mQuietTimeMs);
         case EMBEDDED:

@@ -195,7 +195,7 @@ public class RaftJournalSystem extends AbstractJournalSystem {
    * object is the same as the lifecycle of the {@link RaftJournalSystem}. When the Ratis server
    * is reset during failover, this object must be re-initialized with the new server.
    */
-  private final RaftPrimarySelector mPrimarySelector = new RaftPrimarySelector();
+  private final RaftPrimarySelector mPrimarySelector;
 
   /// Lifecycle: constant from when the journal system is started.
 
@@ -252,12 +252,22 @@ public class RaftJournalSystem extends AbstractJournalSystem {
   public RaftJournalSystem(URI path, ServiceType serviceType) {
     this(path,
         NetworkAddressUtils.getConnectAddress(serviceType, Configuration.global()),
-        ConfigurationUtils.getEmbeddedJournalAddresses(Configuration.global(), serviceType));
+        ConfigurationUtils.getEmbeddedJournalAddresses(Configuration.global(), serviceType),
+        new RaftPrimarySelector());
   }
 
-  @VisibleForTesting
-  RaftJournalSystem(URI path, InetSocketAddress localAddress,
-      List<InetSocketAddress> clusterAddresses) {
+  /**
+   * Creates a journal system based on the Raft protocol.
+   * @param path the location on local disk where the journal files will be stored
+   * @param localAddress the network address of this journal system
+   * @param clusterAddresses the network addresses of other journal systems in the same cluster
+   * @param primarySelector the primary selector to inform the system on a change of leadership
+   */
+  public RaftJournalSystem(
+      URI path,
+      InetSocketAddress localAddress,
+      List<InetSocketAddress> clusterAddresses,
+      RaftPrimarySelector primarySelector) {
     Preconditions.checkState(clusterAddresses.contains(localAddress)
         || NetworkAddressUtils.containsLocalIp(clusterAddresses, Configuration.global()),
         "The cluster addresses (%s) must contain the local master address (%s)",
@@ -266,6 +276,7 @@ public class RaftJournalSystem extends AbstractJournalSystem {
     mPath = new File(Objects.requireNonNull(path).getPath());
     mLocalAddress = Objects.requireNonNull(localAddress);
     mClusterAddresses = Objects.requireNonNull(clusterAddresses);
+    mPrimarySelector = Objects.requireNonNull(primarySelector);
   }
 
   private void maybeMigrateOldJournal() {

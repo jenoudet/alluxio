@@ -16,7 +16,6 @@ package alluxio.master.journal;
  */
 public enum JournalType {
   EMBEDDED,
-  NOOP,
   UFS,
   ;
 }
