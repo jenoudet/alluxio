@@ -13,16 +13,12 @@ package alluxio.master;
 
 import static alluxio.util.network.NetworkAddressUtils.ServiceType;
 
-import alluxio.AlluxioURI;
 import alluxio.Constants;
 import alluxio.ProcessUtils;
 import alluxio.RuntimeConstants;
 import alluxio.conf.Configuration;
 import alluxio.conf.PropertyKey;
-import alluxio.exception.AlluxioException;
-import alluxio.exception.status.UnavailableException;
 import alluxio.executor.ExecutorServiceBuilder;
-import alluxio.grpc.BackupStatusPRequest;
 import alluxio.grpc.GrpcServer;
 import alluxio.grpc.GrpcServerAddress;
 import alluxio.grpc.GrpcServerBuilder;
@@ -41,30 +37,23 @@ import alluxio.master.journal.ufs.UfsJournalSystem;
 import alluxio.master.meta.DefaultMetaMaster;
 import alluxio.master.meta.MetaMaster;
 import alluxio.master.microservices.MasterProcessMicroservice;
-import alluxio.master.microservices.journaling.JournalingMicroservice;
+import alluxio.master.microservices.journal.JournaledMicroservice;
+import alluxio.master.microservices.journal.JournalingMicroservice;
 import alluxio.master.microservices.metrics.MetricsSinkMicroservice;
 import alluxio.master.microservices.web.WebServerMicroservice;
 import alluxio.metrics.MetricKey;
 import alluxio.metrics.MetricsSystem;
-import alluxio.resource.CloseableResource;
 import alluxio.underfs.MasterUfsManager;
-import alluxio.underfs.UnderFileSystem;
-import alluxio.underfs.UnderFileSystemConfiguration;
-import alluxio.util.CommonUtils;
 import alluxio.util.ConfigurationUtils;
 import alluxio.util.JvmPauseMonitor;
 import alluxio.util.ThreadUtils;
-import alluxio.util.URIUtils;
-import alluxio.util.WaitForOptions;
 import alluxio.util.network.NetworkAddressUtils;
-import alluxio.wire.BackupStatus;
 
 import com.google.common.base.Throwables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.HashSet;
@@ -72,7 +61,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
@@ -85,7 +73,7 @@ public class AlluxioMasterProcess extends MasterProcess {
   private static final Logger LOG = LoggerFactory.getLogger(AlluxioMasterProcess.class);
 
   /** The master registry. */
-  protected final MasterRegistry mRegistry = new MasterRegistry();
+  protected final MasterRegistry mRegistry;
 
   /** The JVMMonitor Progress. */
   private JvmPauseMonitor mJvmPauseMonitor;
@@ -96,15 +84,6 @@ public class AlluxioMasterProcess extends MasterProcess {
 
   /** The manager of safe mode state. */
   protected final SafeModeManager mSafeModeManager = new DefaultSafeModeManager();
-
-  /** Master context. */
-  protected final CoreMasterContext mContext;
-
-  /** The manager for creating and restoring backups. */
-  private final BackupManager mBackupManager = new BackupManager(mRegistry);
-
-  /** The manager of all ufs. */
-  private final MasterUfsManager mUfsManager = new MasterUfsManager();
 
   private AlluxioExecutorService mRPCExecutor = null;
   /** See {@link #isStopped()}. */
@@ -118,22 +97,10 @@ public class AlluxioMasterProcess extends MasterProcess {
   /**
    * Creates a new {@link AlluxioMasterProcess}.
    */
-  AlluxioMasterProcess(JournalSystem journalSystem, PrimarySelector leaderSelector) {
+  AlluxioMasterProcess(JournalSystem journalSystem, PrimarySelector leaderSelector,
+      MasterRegistry registry) {
     super(journalSystem, leaderSelector, ServiceType.MASTER_WEB, ServiceType.MASTER_RPC);
-    // Create masters.
-    String baseDir = Configuration.getString(PropertyKey.MASTER_METASTORE_DIR);
-    mContext = CoreMasterContext.newBuilder()
-        .setJournalSystem(mJournalSystem)
-        .setSafeModeManager(mSafeModeManager)
-        .setBackupManager(mBackupManager)
-        .setBlockStoreFactory(MasterUtils.getBlockStoreFactory(baseDir))
-        .setInodeStoreFactory(MasterUtils.getInodeStoreFactory(baseDir))
-        .setStartTimeMs(mStartTimeMs)
-        .setPort(NetworkAddressUtils
-            .getPort(ServiceType.MASTER_RPC, Configuration.global()))
-        .setUfsManager(mUfsManager)
-        .build();
-    MasterUtils.createMasters(mRegistry, mContext);
+    mRegistry = registry;
     try {
       stopServing();
     } catch (Exception e) {
@@ -149,13 +116,6 @@ public class AlluxioMasterProcess extends MasterProcess {
   @Override
   public <T extends Master> T getMaster(Class<T> clazz) {
     return mRegistry.get(clazz);
-  }
-
-  /**
-   * @return true if Alluxio is running in safe mode, false otherwise
-   */
-  public boolean isInSafeMode() {
-    return mSafeModeManager.isInSafeMode();
   }
 
   @Override
@@ -184,7 +144,7 @@ public class AlluxioMasterProcess extends MasterProcess {
     LOG.info("Process starting.");
     mRunning = true;
     mMasterProcessMicroservices.forEach(MasterProcessMicroservice::start);
-    startMasters(false);
+    startRejectingRpcServer();
     startJvmMonitorProcess();
 
     LOG.info("Starting leader selector.");
@@ -201,16 +161,9 @@ public class AlluxioMasterProcess extends MasterProcess {
       if (!mRunning) {
         break;
       }
-      try {
-        mMasterProcessMicroservices.forEach(MasterProcessMicroservice::promote);
-        if (!gainPrimacy()) {
-          continue;
-        }
-      } catch (Throwable t) {
-        if (Configuration.getBoolean(PropertyKey.MASTER_JOURNAL_BACKUP_WHEN_CORRUPTED)) {
-          takeEmergencyBackup();
-        }
-        throw t;
+      mMasterProcessMicroservices.forEach(MasterProcessMicroservice::promote);
+      if (!gainPrimacy()) {
+        continue;
       }
       mLeaderSelector.waitForState(NodeState.STANDBY);
       if (Configuration.getBoolean(PropertyKey.MASTER_JOURNAL_EXIT_ON_DEMOTION)) {
@@ -233,16 +186,8 @@ public class AlluxioMasterProcess extends MasterProcess {
    *
    * @return whether the master successfully upgraded to primary
    */
-  private boolean gainPrimacy() throws Exception {
+  private boolean gainPrimacy() {
     LOG.info("Becoming a leader.");
-    stopMasters();
-    try {
-      startMasters(true);
-    } catch (UnavailableException e) {
-      LOG.warn("Error starting masters: {}", e.toString());
-      stopMasters();
-      return false;
-    }
     mServingThread = new Thread(() -> {
       try {
         startMasterServing(" (gained leadership)", " (lost leadership)");
@@ -277,101 +222,15 @@ public class AlluxioMasterProcess extends MasterProcess {
             mServingThreadTimeoutMs, ThreadUtils.formatStackTrace(mServingThread));
       }
       mServingThread = null;
-      stopMasters();
       LOG.info("Primary stopped");
     }
-    startMasters(false);
+    startRejectingRpcServer();
     LOG.info("Standby started");
   }
 
-  protected void stopCommonServices() throws Exception {
+  protected void stopCommonServices() {
     stopRejectingRpcServer();
     stopServing();
-    LOG.info("Closing all masters.");
-    mRegistry.close();
-    LOG.info("Closed all masters.");
-  }
-
-  private void initFromBackup(AlluxioURI backup) throws IOException {
-    CloseableResource<UnderFileSystem> ufsResource;
-    if (URIUtils.isLocalFilesystem(backup.toString())) {
-      UnderFileSystem ufs = UnderFileSystem.Factory.create("/",
-          UnderFileSystemConfiguration.defaults(Configuration.global()));
-      ufsResource = new CloseableResource<UnderFileSystem>(ufs) {
-        @Override
-        public void closeResource() { }
-      };
-    } else {
-      ufsResource = mUfsManager.getRoot().acquireUfsResource();
-    }
-    try (CloseableResource<UnderFileSystem> closeUfs = ufsResource;
-         InputStream ufsIn = closeUfs.get().open(backup.getPath())) {
-      LOG.info("Initializing metadata from backup {}", backup);
-      mBackupManager.initFromBackup(ufsIn);
-    }
-  }
-
-  protected void takeEmergencyBackup() throws AlluxioException, InterruptedException,
-      TimeoutException {
-    LOG.warn("Emergency backup triggered");
-    DefaultMetaMaster metaMaster = (DefaultMetaMaster) mRegistry.get(MetaMaster.class);
-    BackupStatus backup = metaMaster.takeEmergencyBackup();
-    BackupStatusPRequest statusRequest =
-        BackupStatusPRequest.newBuilder().setBackupId(backup.getBackupId().toString()).build();
-    final int requestIntervalMs = 2_000;
-    CommonUtils.waitFor("emergency backup to complete", () -> {
-      try {
-        BackupStatus status = metaMaster.getBackupStatus(statusRequest);
-        LOG.info("Auto backup state: {} | Entries processed: {}.", status.getState(),
-            status.getEntryCount());
-        return status.isCompleted();
-      } catch (AlluxioException e) {
-        return false;
-      }
-      // no need for timeout on shutdown, we must wait until the backup is complete
-    }, WaitForOptions.defaults().setInterval(requestIntervalMs).setTimeoutMs(Integer.MAX_VALUE));
-  }
-
-  /**
-   * Starts all masters, including block master, FileSystem master, and additional masters.
-   *
-   * @param isLeader if the Master is leader
-   */
-  protected void startMasters(boolean isLeader) throws IOException {
-    LOG.info("Starting all masters as: {}.", (isLeader) ? "leader" : "follower");
-    if (isLeader) {
-      if (Configuration.isSet(PropertyKey.MASTER_JOURNAL_INIT_FROM_BACKUP)) {
-        AlluxioURI backup =
-            new AlluxioURI(Configuration.getString(
-                PropertyKey.MASTER_JOURNAL_INIT_FROM_BACKUP));
-        if (mJournalSystem.isEmpty()) {
-          initFromBackup(backup);
-        } else {
-          LOG.info("The journal system is not freshly formatted, skipping restoring backup from "
-              + backup);
-        }
-      }
-      mSafeModeManager.notifyPrimaryMasterStarted();
-    } else {
-      startRejectingRpcServer();
-    }
-    mRegistry.start(isLeader);
-    // Signal state-lock-manager that masters are ready.
-    mContext.getStateLockManager().mastersStartedCallback();
-    LOG.info("All masters started.");
-  }
-
-  /**
-   * Stops all masters, including block master, fileSystem master and additional masters.
-   */
-  protected void stopMasters() {
-    try {
-      LOG.info("Stopping all masters.");
-      mRegistry.stop();
-      LOG.info("All masters stopped.");
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
   }
 
   /**
@@ -594,14 +453,40 @@ public class AlluxioMasterProcess extends MasterProcess {
         selector = new UfsJournalSingleMasterPrimarySelector();
         journalSystem = new UfsJournalSystem(journalLocation, quietTimeMs);
       }
-      AlluxioMasterProcess process = new AlluxioMasterProcess(journalSystem, selector);
+      MasterRegistry masterRegistry = new MasterRegistry();
+
+      AlluxioMasterProcess process = new AlluxioMasterProcess(journalSystem, selector,
+          masterRegistry);
+
+      // create the masters
+      BackupManager backupManager = new BackupManager(masterRegistry);
+      MasterUfsManager ufsManager = new MasterUfsManager();
+      String baseDir = Configuration.getString(PropertyKey.MASTER_METASTORE_DIR);
+      CoreMasterContext context = CoreMasterContext.newBuilder()
+          .setJournalSystem(journalSystem)
+          .setSafeModeManager(new DefaultSafeModeManager())
+          .setBackupManager(backupManager)
+          .setBlockStoreFactory(MasterUtils.getBlockStoreFactory(baseDir))
+          .setInodeStoreFactory(MasterUtils.getInodeStoreFactory(baseDir))
+          .setStartTimeMs(process.getStartTimeMs())
+          .setPort(NetworkAddressUtils.getPort(ServiceType.MASTER_RPC, Configuration.global()))
+          .setUfsManager(ufsManager)
+          .build();
+      MasterUtils.createMasters(masterRegistry, context);
+      DefaultMetaMaster metaMaster = (DefaultMetaMaster) masterRegistry.get(MetaMaster.class);
+
+      MasterProcessMicroservice journaledMicroservice =
+          JournaledMicroservice.create(journalSystem, masterRegistry, backupManager, ufsManager,
+              context);
+      process.registerMasterProcessMicroservice(journaledMicroservice);
       MasterProcessMicroservice journalingMicroservice =
-          JournalingMicroservice.create(journalSystem);
+          JournalingMicroservice.create(journalSystem, metaMaster);
       process.registerMasterProcessMicroservice(journalingMicroservice);
       MasterProcessMicroservice webMicroservice = WebServerMicroservice.create(process);
       process.registerMasterProcessMicroservice(webMicroservice);
       MasterProcessMicroservice metricsSinkMicroservice = MetricsSinkMicroservice.create();
       process.registerMasterProcessMicroservice(metricsSinkMicroservice);
+
       return process;
     }
 
