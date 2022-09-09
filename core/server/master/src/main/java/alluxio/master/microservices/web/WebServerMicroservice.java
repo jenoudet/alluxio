@@ -39,7 +39,19 @@ public abstract class WebServerMicroservice implements MasterProcessMicroservice
 
   WebServerMicroservice(AlluxioMasterProcess masterProcess) {
     mMasterProcess = masterProcess;
-    configureWebAddress();
+    // configure web address
+    int port = NetworkAddressUtils.getPort(mServiceType, Configuration.global());
+    if (!ConfigurationUtils.isHaMode(Configuration.global()) && port == 0) {
+      throw new RuntimeException(
+          String.format("%s port must be nonzero in single-master mode", mServiceType));
+    }
+    if (port == 0) {
+      try (ServerSocket s = new ServerSocket(0)) {
+        Configuration.set(mServiceType.getPortKey(), s.getLocalPort());
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      }
+    }
   }
 
   /**
@@ -57,21 +69,6 @@ public abstract class WebServerMicroservice implements MasterProcessMicroservice
       return new InetSocketAddress(mWebServer.getBindHost(), mWebServer.getLocalPort());
     }
     return NetworkAddressUtils.getConnectAddress(ServiceType.MASTER_WEB, Configuration.global());
-  }
-
-  private void configureWebAddress() {
-    int port = NetworkAddressUtils.getPort(mServiceType, Configuration.global());
-    if (!ConfigurationUtils.isHaMode(Configuration.global()) && port == 0) {
-      throw new RuntimeException(
-          String.format("%s port must be nonzero in single-master mode", mServiceType));
-    }
-    if (port == 0) {
-      try (ServerSocket s = new ServerSocket(0)) {
-        Configuration.set(mServiceType.getPortKey(), s.getLocalPort());
-      } catch (IOException e) {
-        throw new RuntimeException(e);
-      }
-    }
   }
 
   protected WebServer createWebServer() {

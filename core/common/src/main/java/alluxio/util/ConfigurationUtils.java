@@ -16,6 +16,7 @@ import alluxio.cli.CommandUtils;
 import alluxio.conf.AlluxioConfiguration;
 import alluxio.conf.PropertyKey;
 import alluxio.exception.ExceptionMessage;
+import alluxio.master.journal.JournalType;
 import alluxio.util.network.NetworkAddressUtils;
 import alluxio.util.network.NetworkAddressUtils.ServiceType;
 
@@ -239,7 +240,8 @@ public final class ConfigurationUtils {
    * @return whether the configuration specifies to run in ha mode
    */
   public static boolean isHaMode(AlluxioConfiguration conf) {
-    return conf.getBoolean(PropertyKey.ZOOKEEPER_ENABLED) || getMasterRpcAddresses(conf).size() > 1;
+    return conf.getBoolean(PropertyKey.ZOOKEEPER_ENABLED)
+        || conf.getEnum(PropertyKey.MASTER_JOURNAL_TYPE, JournalType.class) == JournalType.EMBEDDED;
   }
 
   /**

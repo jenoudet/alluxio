@@ -11,17 +11,8 @@
 
 package alluxio.master;
 
-import static alluxio.util.network.NetworkAddressUtils.ServiceType;
-
-import alluxio.Constants;
-import alluxio.ProcessUtils;
-import alluxio.RuntimeConstants;
 import alluxio.conf.Configuration;
 import alluxio.conf.PropertyKey;
-import alluxio.executor.ExecutorServiceBuilder;
-import alluxio.grpc.GrpcServer;
-import alluxio.grpc.GrpcServerAddress;
-import alluxio.grpc.GrpcServerBuilder;
 import alluxio.grpc.GrpcService;
 import alluxio.grpc.JournalDomain;
 import alluxio.grpc.NodeState;
@@ -37,6 +28,7 @@ import alluxio.master.journal.ufs.UfsJournalSystem;
 import alluxio.master.meta.DefaultMetaMaster;
 import alluxio.master.meta.MetaMaster;
 import alluxio.master.microservices.MasterProcessMicroservice;
+import alluxio.master.microservices.grpc.GrpcServerMicroservice;
 import alluxio.master.microservices.journal.JournaledMicroservice;
 import alluxio.master.microservices.journal.JournalingMicroservice;
 import alluxio.master.microservices.metrics.MetricsSinkMicroservice;
@@ -46,21 +38,19 @@ import alluxio.metrics.MetricsSystem;
 import alluxio.underfs.MasterUfsManager;
 import alluxio.util.ConfigurationUtils;
 import alluxio.util.JvmPauseMonitor;
-import alluxio.util.ThreadUtils;
 import alluxio.util.network.NetworkAddressUtils;
+import alluxio.util.network.NetworkAddressUtils.ServiceType;
 
-import com.google.common.base.Throwables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
-import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
@@ -82,17 +72,13 @@ public class AlluxioMasterProcess extends MasterProcess {
   final InetSocketAddress mRpcConnectAddress =
       NetworkAddressUtils.getConnectAddress(ServiceType.MASTER_RPC, Configuration.global());
 
-  /** The manager of safe mode state. */
-  protected final SafeModeManager mSafeModeManager = new DefaultSafeModeManager();
-
-  private AlluxioExecutorService mRPCExecutor = null;
   /** See {@link #isStopped()}. */
   protected final AtomicBoolean mIsStopped = new AtomicBoolean(false);
 
   /** See {@link #isRunning()}. */
   private volatile boolean mRunning = false;
 
-  private final Set<MasterProcessMicroservice> mMasterProcessMicroservices = new HashSet<>();
+  private final List<MasterProcessMicroservice> mMasterProcessMicroservices = new ArrayList<>();
 
   /**
    * Creates a new {@link AlluxioMasterProcess}.
@@ -101,11 +87,6 @@ public class AlluxioMasterProcess extends MasterProcess {
       MasterRegistry registry) {
     super(journalSystem, leaderSelector, ServiceType.MASTER_WEB, ServiceType.MASTER_RPC);
     mRegistry = registry;
-    try {
-      stopServing();
-    } catch (Exception e) {
-      throw new RuntimeException(e);
-    }
     LOG.info("New process created.");
   }
 
@@ -117,6 +98,9 @@ public class AlluxioMasterProcess extends MasterProcess {
   public <T extends Master> T getMaster(Class<T> clazz) {
     return mRegistry.get(clazz);
   }
+
+  @Override
+  void startServing(String startMessage, String stopMessage) {}
 
   @Override
   public boolean isWebServing() {
@@ -144,7 +128,6 @@ public class AlluxioMasterProcess extends MasterProcess {
     LOG.info("Process starting.");
     mRunning = true;
     mMasterProcessMicroservices.forEach(MasterProcessMicroservice::start);
-    startRejectingRpcServer();
     startJvmMonitorProcess();
 
     LOG.info("Starting leader selector.");
@@ -162,9 +145,6 @@ public class AlluxioMasterProcess extends MasterProcess {
         break;
       }
       mMasterProcessMicroservices.forEach(MasterProcessMicroservice::promote);
-      if (!gainPrimacy()) {
-        continue;
-      }
       mLeaderSelector.waitForState(NodeState.STANDBY);
       if (Configuration.getBoolean(PropertyKey.MASTER_JOURNAL_EXIT_ON_DEMOTION)) {
         stop();
@@ -173,64 +153,8 @@ public class AlluxioMasterProcess extends MasterProcess {
           break;
         }
         mMasterProcessMicroservices.forEach(MasterProcessMicroservice::demote);
-        losePrimacy();
       }
     }
-  }
-
-  /**
-   * Upgrades the master to primary mode.
-   *
-   * If the master loses primacy during the journal upgrade, this method will clean up the partial
-   * upgrade, leaving the master in standby mode.
-   *
-   * @return whether the master successfully upgraded to primary
-   */
-  private boolean gainPrimacy() {
-    LOG.info("Becoming a leader.");
-    mServingThread = new Thread(() -> {
-      try {
-        startMasterServing(" (gained leadership)", " (lost leadership)");
-      } catch (Throwable t) {
-        Throwable root = Throwables.getRootCause(t);
-        if (root instanceof InterruptedException || Thread.interrupted()) {
-          return;
-        }
-        ProcessUtils.fatalError(LOG, t, "Exception thrown in main serving thread");
-      }
-    }, "MasterServingThread");
-    LOG.info("Starting a server thread.");
-    mServingThread.start();
-    if (!waitForReady(10 * Constants.MINUTE_MS)) {
-      ThreadUtils.logAllThreads();
-      throw new RuntimeException("Alluxio master failed to come up");
-    }
-    LOG.info("Primary started");
-    return true;
-  }
-
-  private void losePrimacy() throws Exception {
-    LOG.info("Losing the leadership.");
-    if (mServingThread != null) {
-      stopServingGrpc();
-    }
-    if (mServingThread != null) {
-      mServingThread.join(mServingThreadTimeoutMs);
-      if (mServingThread.isAlive()) {
-        ProcessUtils.fatalError(LOG,
-            "Failed to stop serving thread after %dms. Serving thread stack trace:%n%s",
-            mServingThreadTimeoutMs, ThreadUtils.formatStackTrace(mServingThread));
-      }
-      mServingThread = null;
-      LOG.info("Primary stopped");
-    }
-    startRejectingRpcServer();
-    LOG.info("Standby started");
-  }
-
-  protected void stopCommonServices() {
-    stopRejectingRpcServer();
-    stopServing();
   }
 
   /**
@@ -255,31 +179,6 @@ public class AlluxioMasterProcess extends MasterProcess {
     }
   }
 
-  /**
-   * Starts serving, letting {@link MetricsSystem} start sink and starting the web ui server and RPC
-   * Server.
-   *
-   * @param startMessage empty string or the message that the master gains the leadership
-   * @param stopMessage empty string or the message that the master loses the leadership
-   */
-  @Override
-  protected void startServing(String startMessage, String stopMessage) {
-    // start all common services for non-ha master or leader master
-    startJvmMonitorProcess();
-    startMasterServing(startMessage, stopMessage);
-  }
-
-  protected void startMasterServing(String startMessage, String stopMessage) {
-    startServingRPCServer();
-    LOG.info(
-        "Alluxio {} master version {} started{}. bindAddress={}, connectAddress={}, webAddress={}",
-        mLeaderSelector.getState().name(), RuntimeConstants.VERSION, startMessage, mRpcBindAddress,
-        mRpcConnectAddress, mWebBindAddress);
-    // Blocks until RPC server is shut down. (via #stopServing)
-    mGrpcServer.awaitTermination();
-    LOG.info("Alluxio master ended {}", stopMessage);
-  }
-
   @Override
   public void stop() throws Exception {
     synchronized (mIsStopped) {
@@ -289,10 +188,8 @@ public class AlluxioMasterProcess extends MasterProcess {
       LOG.info("Stopping...");
       mRunning = false;
       mMasterProcessMicroservices.forEach(MasterProcessMicroservice::stop);
-      stopCommonServices();
-      if (mLeaderSelector != null) {
-        mLeaderSelector.stop();
-      }
+      stopJvmMonitorProcess();
+      mLeaderSelector.stop();
       mIsStopped.set(true);
       LOG.info("Stopped.");
     }
@@ -307,97 +204,9 @@ public class AlluxioMasterProcess extends MasterProcess {
   }
 
   /**
-   * Starts the gRPC server. The AlluxioMaster registers the Services of registered
-   * {@link Master}s and meta services.
-   */
-  protected void startServingRPCServer() {
-    stopRejectingRpcServer();
-    try {
-      synchronized (mGrpcServerLock) {
-        LOG.info("Starting gRPC server on address:{}", mRpcBindAddress);
-        mGrpcServer = createRPCServer();
-        // Start serving.
-        mGrpcServer.start();
-        mSafeModeManager.notifyRpcServerStarted();
-        // Acquire and log bind port from newly started server.
-        InetSocketAddress listeningAddress = InetSocketAddress
-            .createUnresolved(mRpcBindAddress.getHostName(), mGrpcServer.getBindPort());
-        LOG.info("gRPC server listening on: {}", listeningAddress);
-      }
-    } catch (IOException e) {
-      LOG.error("gRPC serving failed.", e);
-      throw new RuntimeException("gRPC serving failed");
-    }
-  }
-
-  private GrpcServer createRPCServer() {
-    // Create an executor for Master RPC server.
-    mRPCExecutor = ExecutorServiceBuilder.buildExecutorService(
-        ExecutorServiceBuilder.RpcExecutorHost.MASTER);
-    MetricsSystem.registerGaugeIfAbsent(MetricKey.MASTER_RPC_QUEUE_LENGTH.getName(),
-        mRPCExecutor::getRpcQueueLength);
-    MetricsSystem.registerGaugeIfAbsent(MetricKey.MASTER_RPC_THREAD_ACTIVE_COUNT.getName(),
-        mRPCExecutor::getActiveCount);
-    MetricsSystem.registerGaugeIfAbsent(MetricKey.MASTER_RPC_THREAD_CURRENT_COUNT.getName(),
-        mRPCExecutor::getPoolSize);
-    // Create underlying gRPC server.
-    GrpcServerBuilder builder = GrpcServerBuilder
-        .forAddress(GrpcServerAddress.create(mRpcConnectAddress.getHostName(), mRpcBindAddress),
-            Configuration.global())
-        .executor(mRPCExecutor)
-        .flowControlWindow(
-            (int) Configuration.getBytes(PropertyKey.MASTER_NETWORK_FLOWCONTROL_WINDOW))
-        .keepAliveTime(
-            Configuration.getMs(PropertyKey.MASTER_NETWORK_KEEPALIVE_TIME_MS),
-            TimeUnit.MILLISECONDS)
-        .keepAliveTimeout(
-            Configuration.getMs(PropertyKey.MASTER_NETWORK_KEEPALIVE_TIMEOUT_MS),
-            TimeUnit.MILLISECONDS)
-        .permitKeepAlive(
-            Configuration.getMs(PropertyKey.MASTER_NETWORK_PERMIT_KEEPALIVE_TIME_MS),
-            TimeUnit.MILLISECONDS)
-        .maxInboundMessageSize((int) Configuration.getBytes(
-            PropertyKey.MASTER_NETWORK_MAX_INBOUND_MESSAGE_SIZE));
-    addGrpcServices(builder);
-    // Builds a server that is not started yet.
-    return builder.build();
-  }
-
-  protected void addGrpcServices(GrpcServerBuilder builder) {
-    // Bind manifests of each Alluxio master to RPC server.
-    for (Master master : mRegistry.getServers()) {
-      registerServices(builder, master.getServices());
-    }
-    // Bind manifest of Alluxio JournalMaster service.
-    // TODO(ggezer) Merge this with registerServices() logic.
-    builder.addService(alluxio.grpc.ServiceType.JOURNAL_MASTER_CLIENT_SERVICE,
-        new GrpcService(new JournalMasterClientServiceHandler(
-            new DefaultJournalMaster(JournalDomain.MASTER, mJournalSystem, mLeaderSelector))));
-  }
-
-  protected void stopServingGrpc() {
-    synchronized (mGrpcServerLock) {
-      if (mGrpcServer != null && mGrpcServer.isServing() && !mGrpcServer.shutdown()) {
-        LOG.warn("Alluxio master RPC server shutdown timed out.");
-      }
-    }
-    if (mRPCExecutor != null) {
-      mRPCExecutor.shutdownNow();
-      try {
-        mRPCExecutor.awaitTermination(
-            Configuration.getMs(PropertyKey.NETWORK_CONNECTION_SERVER_SHUTDOWN_TIMEOUT),
-            TimeUnit.MILLISECONDS);
-      } catch (InterruptedException ie) {
-        Thread.currentThread().interrupt();
-      }
-    }
-  }
-
-  /**
    * Stops all services.
    */
-  protected void stopServing() {
-    stopServingGrpc();
+  protected void stopJvmMonitorProcess() {
     // stop JVM monitor process
     if (mJvmPauseMonitor != null) {
       mJvmPauseMonitor.stop();
@@ -461,10 +270,11 @@ public class AlluxioMasterProcess extends MasterProcess {
       // create the masters
       BackupManager backupManager = new BackupManager(masterRegistry);
       MasterUfsManager ufsManager = new MasterUfsManager();
+      SafeModeManager safeModeManager = new DefaultSafeModeManager();
       String baseDir = Configuration.getString(PropertyKey.MASTER_METASTORE_DIR);
       CoreMasterContext context = CoreMasterContext.newBuilder()
           .setJournalSystem(journalSystem)
-          .setSafeModeManager(new DefaultSafeModeManager())
+          .setSafeModeManager(safeModeManager)
           .setBackupManager(backupManager)
           .setBlockStoreFactory(MasterUtils.getBlockStoreFactory(baseDir))
           .setInodeStoreFactory(MasterUtils.getInodeStoreFactory(baseDir))
@@ -475,13 +285,24 @@ public class AlluxioMasterProcess extends MasterProcess {
       MasterUtils.createMasters(masterRegistry, context);
       DefaultMetaMaster metaMaster = (DefaultMetaMaster) masterRegistry.get(MetaMaster.class);
 
+      Map<alluxio.grpc.ServiceType, GrpcService> grpcServices = new HashMap<>();
+      for (Master master : masterRegistry.getServers()) {
+        grpcServices.putAll(master.getServices());
+      }
+      grpcServices.put(alluxio.grpc.ServiceType.JOURNAL_MASTER_CLIENT_SERVICE,
+          new GrpcService(new JournalMasterClientServiceHandler(
+              new DefaultJournalMaster(JournalDomain.MASTER, journalSystem, selector))));
+
       MasterProcessMicroservice journaledMicroservice =
-          JournaledMicroservice.create(journalSystem, masterRegistry, backupManager, ufsManager,
-              context);
+          JournaledMicroservice.create(journalSystem, masterRegistry, backupManager,
+              safeModeManager, ufsManager, context);
       process.registerMasterProcessMicroservice(journaledMicroservice);
       MasterProcessMicroservice journalingMicroservice =
           JournalingMicroservice.create(journalSystem, metaMaster);
       process.registerMasterProcessMicroservice(journalingMicroservice);
+      MasterProcessMicroservice grpcServerMicroservice = GrpcServerMicroservice.create(grpcServices,
+          safeModeManager);
+      process.registerMasterProcessMicroservice(grpcServerMicroservice);
       MasterProcessMicroservice webMicroservice = WebServerMicroservice.create(process);
       process.registerMasterProcessMicroservice(webMicroservice);
       MasterProcessMicroservice metricsSinkMicroservice = MetricsSinkMicroservice.create();

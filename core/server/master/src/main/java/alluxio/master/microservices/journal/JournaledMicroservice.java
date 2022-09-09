@@ -19,7 +19,6 @@ import alluxio.exception.status.UnavailableException;
 import alluxio.grpc.ErrorType;
 import alluxio.master.BackupManager;
 import alluxio.master.CoreMasterContext;
-import alluxio.master.DefaultSafeModeManager;
 import alluxio.master.MasterRegistry;
 import alluxio.master.SafeModeManager;
 import alluxio.master.journal.JournalSystem;
@@ -163,7 +162,8 @@ public class JournaledMicroservice implements MasterProcessMicroservice {
   /**
    * @param journalSystem the journal system
    * @param registry core master registry
-   * @param manager the backup manager
+   * @param backupManager the backup manager
+   * @param safeModeManager the safe mode manager
    * @param ufsManager the ufs manager
    * @param context the master context
    * @return a microservice that manages {@link alluxio.master.CoreMaster}s for the
@@ -172,11 +172,12 @@ public class JournaledMicroservice implements MasterProcessMicroservice {
   public static MasterProcessMicroservice create(
       JournalSystem journalSystem,
       MasterRegistry registry,
-      BackupManager manager,
+      BackupManager backupManager,
+      SafeModeManager safeModeManager,
       MasterUfsManager ufsManager,
       CoreMasterContext context
   ) {
-    return new JournaledMicroservice(journalSystem, registry, manager, new DefaultSafeModeManager(),
+    return new JournaledMicroservice(journalSystem, registry, backupManager, safeModeManager,
         ufsManager, context);
   }
 }
